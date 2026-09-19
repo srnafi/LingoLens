@@ -2,34 +2,57 @@
 
 ## Architecture (Pure Python)
 
-- **UI**: `lingolens_control_center.py` — PyQt5 Control Center with dark theme, sidebar navigation, 3 settings pages
-- **Screen Capture**: `python/screen_snipper.py` — PyQt5 full-screen overlay for region selection
-- **Text Detection**: `python/text_detector_text.py` — OpenVINO horizontal-text-detection-0001 model, singleton lazy-loaded
-- **OCR Server**: `python/eocr_server.py` — Flask REST API with EasyOCR, persistent Reader loaded once at startup
-- **Translation Display**: `python/text_displayer.py` — Multi-threaded translation + Tkinter overlay windows
-- **Translation Engine**: `python/translate.py` — Tiered fallback: googletrans → deep_translator Google → MyMemory
-- **Launcher**: `run.py` / `run.bat` — Virtual environment activation + app launch
+- **`app.py`** — PyQt5 Control Center: dark theme, sidebar navigation, settings pages, Flask process manager
+- **`python/capture.py`** — PyQt5 full-screen overlay for screen region selection
+- **`python/detector.py`** — OpenVINO text detection (horizontal-text-detection-0001), singleton lazy-loaded, crops detected words
+- **`python/ocr_server.py`** — Flask REST API with EasyOCR, persistent Reader loaded once at startup
+- **`python/overlay.py`** — Groups OCR words into lines → paragraphs, translates each paragraph as a unit, displays overlays
+- **`python/translator.py`** — Tiered fallback: googletrans → deep_translator Google → MyMemory
+- **`run.py` / `run.bat`** — Virtual environment launcher
+
+## Pipeline Flow
+
+```
+app.py → (subprocess) capture.py → detector.py → overlay.py → ocr_server.py (Flask)
+                screenshot    OpenVINO detect    EasyOCR via Flask
+                              + crop words        + group into paragraphs
+                                                  + translate full paragraphs
+                                                  + display overlays
+```
+
+## Key Design: Paragraph-Level Translation
+
+Instead of translating each OCR word individually (which loses context and
+produces unnatural output), LingoLens:
+
+1. Detects text regions with OpenVINO
+2. Crops each word and sends to EasyOCR via Flask
+3. **Groups words into lines** by vertical proximity (words with overlapping Y ranges)
+4. **Groups lines into paragraphs** by vertical spacing (gaps < 1.5x line height)
+5. **Translates each paragraph as a complete text unit** — giving the translation
+   engine full context for natural, grammatically correct output
+6. Displays one overlay per paragraph with word-wrapping
 
 ## Key Architectural Decisions
 
-- **Flask retained** for OCR persistence: EasyOCR Reader loaded once at startup, reused across all requests
-- **Singleton OpenVINO model**: TextDetector lazy-loaded once, reused across snips (previously reloaded every time)
-- **Shared Tk root**: Text width measurement uses a single hidden Tk root instead of creating/destroying per word
-- **Settings persistence**: User preferences saved to `settings.json`, restored on launch
-- **Global hotkey**: `Alt+Shift+M` via Windows API `RegisterHotKey` + `QAbstractNativeEventFilter`
+- **Flask retained** for OCR persistence: EasyOCR Reader loaded once at startup
+- **Singleton OpenVINO model**: lazy-loaded once, reused across snips
+- **Shared Tk root**: text measurement uses one hidden Tk root
+- **Settings persistence**: saved to `settings.json`, restored on launch
+- **Global hotkey**: `Alt+Shift+M` via Windows API
 
-## Bug Fixes
+## Bug Fixes (session)
 
-- Fixed `screen_snipper.py` module-global crash (r,g,b,op,lw used before assignment)
-- Fixed `eocr_server.py` double EasyOCR Reader initialization (wasted ~30s startup)
+- Fixed `capture.py` globals crash (r,g,b,op,lw used before assignment)
+- Fixed `ocr_server.py` double EasyOCR Reader initialization
 - Fixed missing `text_color` passthrough from UI to overlay
-- Added Flask `/health` endpoint and readiness check before OCR requests
-- Added Escape/Q key to dismiss translation overlays
-- Removed stale `python/app_main.py` and unused `python/width.py`
-- Added error handling for Flask being down, OCR failures, translation failures
+- Added Flask `/health` endpoint and readiness check
+- Added Escape/Q to dismiss translation overlays
+- Added error handling for missing OpenVINO models
+- Removed stale files: `app_main.py`, `width.py`
 
 ## Migration History
 
 - Electron → Pure Python (PyQt5) migration completed
-- All Electron artifacts removed (main.js, renderer.js, index.html, package.json, node_modules/)
-- Repository cleaned: large model weights excluded from git, comprehensive .gitignore
+- All Electron artifacts removed
+- Repository cleaned: large model weights excluded from git

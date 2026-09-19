@@ -6,10 +6,10 @@ import pyautogui
 from PIL import Image, ImageGrab, ImageFilter
 from PyQt5 import QtWidgets, QtCore, QtGui
 from pathlib import Path
-import text_detector_text
+import detector
 
 
-class SnippingWidget(QtWidgets.QWidget):
+class CaptureWidget(QtWidgets.QWidget):
     """Full-screen transparent overlay for region selection."""
     num_snip = 0
     is_snipping = False
@@ -24,8 +24,7 @@ class SnippingWidget(QtWidgets.QWidget):
         self.font_size = font_size
         self.text_color = text_color or "#000000"
 
-        # Parse fill color from hex string
-        self.fill_color_rgb = (255, 0, 0, 100)  # default red
+        self.fill_color_rgb = (255, 0, 0, 100)
         self.opacity_val = 0.3
         self.line_width_val = 3
 
@@ -58,14 +57,15 @@ class SnippingWidget(QtWidgets.QWidget):
             QtCore.Qt.Window |
             Qt.WindowStaysOnTopHint
         )
-        SnippingWidget.is_snipping = True
+        CaptureWidget.is_snipping = True
         self.setWindowOpacity(self.opacity_val)
-        QtWidgets.QApplication.setOverrideCursor(QtGui.QCursor(QtCore.Qt.CrossCursor))
+        QtWidgets.QApplication.setOverrideCursor(
+            QtGui.QCursor(QtCore.Qt.CrossCursor))
         self.show()
         self.activateWindow()
 
     def paintEvent(self, event):
-        if SnippingWidget.is_snipping:
+        if CaptureWidget.is_snipping:
             fill_color = self.fill_color_rgb
             opacity = self.opacity_val
             line_width = self.line_width_val
@@ -80,13 +80,11 @@ class SnippingWidget(QtWidgets.QWidget):
         qp = QtGui.QPainter(self)
         qp.setPen(QtGui.QPen(QtGui.QColor('black'), line_width))
         qp.setBrush(QtGui.QColor(*fill_color))
-        rect = QtCore.QRectF(self.begin, self.end)
-        qp.drawRect(rect)
+        qp.drawRect(QtCore.QRectF(self.begin, self.end))
 
     def keyPressEvent(self, event):
         if event.key() in (QtCore.Qt.Key_Q, QtCore.Qt.Key_Escape):
-            print('Snipping cancelled')
-            SnippingWidget.is_snipping = False
+            CaptureWidget.is_snipping = False
             self.close()
         event.accept()
 
@@ -103,8 +101,8 @@ class SnippingWidget(QtWidgets.QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() != QtCore.Qt.LeftButton:
             return
-        SnippingWidget.num_snip += 1
-        SnippingWidget.is_snipping = False
+        CaptureWidget.num_snip += 1
+        CaptureWidget.is_snipping = False
         QtWidgets.QApplication.restoreOverrideCursor()
 
         x1 = min(self.begin.x(), self.end.x())
@@ -112,9 +110,7 @@ class SnippingWidget(QtWidgets.QWidget):
         x2 = max(self.begin.x(), self.end.x())
         y2 = max(self.begin.y(), self.end.y())
 
-        # Ignore tiny selections (accidental clicks)
         if (x2 - x1) < 10 or (y2 - y1) < 10:
-            print("Selection too small, ignoring")
             self.close()
             return
 
@@ -122,26 +118,14 @@ class SnippingWidget(QtWidgets.QWidget):
         QtWidgets.QApplication.processEvents()
         img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
 
-        # Upscale for better OCR quality
-        dpi = 300
-        scale_factor = dpi / 96
-        new_size = (int(img.width * scale_factor), int(img.height * scale_factor))
-        try:
-            resample = Image.Resampling.NEAREST
-        except AttributeError:
-            resample = Image.NEAREST
-        img2 = img.resize(new_size, resample)
-        img2 = img2.filter(ImageFilter.SHARPEN)
+        # Save the full-quality screenshot for OCR
+        save_path = Path(__file__).parent / "image1.png"
+        img.save(str(save_path), format="png")
 
-        print(f"Snip captured at ({x1}, {y1})")
-        QtWidgets.QApplication.processEvents()
         self.close()
 
-        selected_directory = Path(__file__).parent
-        save_path = os.path.join(selected_directory, "image1.png")
-        img.save(save_path, format="png")
-
-        text_detector_text.main(
+        # Hand off to detector -> OCR -> overlay pipeline
+        detector.main(
             x1=x1, y1=y1, destination=self.destination,
             alpha=self.alpha, font_size=self.font_size,
             text_color=self.text_color,
@@ -151,7 +135,6 @@ class SnippingWidget(QtWidgets.QWidget):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
 
-    # Args: destination, fill_color_hex, opacity, line_width, alpha, font_size, [text_color]
     destination = sys.argv[1] if len(sys.argv) > 1 else "en"
     fill_color_hex = sys.argv[2] if len(sys.argv) > 2 else "#ff0000"
     opacity = sys.argv[3] if len(sys.argv) > 3 else "0.3"
@@ -160,14 +143,10 @@ if __name__ == '__main__':
     font_size = sys.argv[6] if len(sys.argv) > 6 else "12"
     text_color = sys.argv[7] if len(sys.argv) > 7 else "#000000"
 
-    snipping_widget = SnippingWidget(
-        destination=destination,
-        fill_color=fill_color_hex,
-        opacity=opacity,
-        line_width=line_width,
-        alpha=alpha,
-        font_size=font_size,
-        text_color=text_color,
+    widget = CaptureWidget(
+        destination=destination, fill_color=fill_color_hex,
+        opacity=opacity, line_width=line_width, alpha=alpha,
+        font_size=font_size, text_color=text_color,
     )
-    snipping_widget.start()
+    widget.start()
     sys.exit(app.exec_())
