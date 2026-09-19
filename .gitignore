@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
+
+# OS Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs and Debug Output
+*.log
+eocr_server.log
+
+# Generated OCR Results and Crops
+python/crops/
+python/image1.png
+image1.png
+ocr_results.json
+
+# Model Weights & Large Archives (downloaded or managed separately)
+python/EasyOCR/model/*.pth
+python/EasyOCR/model/*.zip
+python/models/*.bin
+python/models/*.xml
+python/models/*.zip
+*.rar
+*.zip
+
+# Secrets and Local Environment Configuration
+.env
+
+# Node / Electron
+node_modules/
+dist/
