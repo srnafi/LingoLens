@@ -144,10 +144,6 @@ class LingoLensControlCenter(QtWidgets.QWidget):
             print(f"Failed to load settings: {e}")
 
     def init_ui(self):
-        main_layout = QtWidgets.QHBoxLayout(self)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(15)
-
         # Sidebar Navigation Panel
         sidebar = QtWidgets.QVBoxLayout()
         sidebar.setContentsMargins(0, 0, 0, 0)
@@ -330,9 +326,32 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         p3_layout.addStretch()
         self.stack.addWidget(page3)
 
-        main_layout.addWidget(sidebar_widget)
-        main_layout.addWidget(self.stack)
+        # Status bar at bottom
+        status_widget = QtWidgets.QWidget()
+        status_layout = QtWidgets.QHBoxLayout(status_widget)
+        status_layout.setContentsMargins(0, 5, 0, 0)
+        self.status_label = QtWidgets.QLabel("🔴 Flask OCR: starting...")
+        self.status_label.setStyleSheet("color: #f38ba8; font-size: 9pt;")
+        status_layout.addWidget(self.status_label)
+        status_layout.addStretch()
+        self.hotkey_label = QtWidgets.QLabel("Hotkey: Alt+Shift+M")
+        self.hotkey_label.setStyleSheet("color: #6c7086; font-size: 9pt;")
+        status_layout.addWidget(self.hotkey_label)
 
+        outer_layout = QtWidgets.QVBoxLayout()
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+        content_widget = QtWidgets.QWidget()
+        content_layout = QtWidgets.QHBoxLayout(content_widget)
+        content_layout.setContentsMargins(15, 15, 15, 0)
+        content_layout.setSpacing(15)
+        content_layout.addWidget(sidebar_widget)
+        content_layout.addWidget(self.stack)
+        outer_layout.addWidget(content_widget)
+        outer_layout.addWidget(status_widget)
+        self.setLayout(outer_layout)
+
+        # Remove the old direct layout additions
         # Connect sidebar navigation
         btn_ocr.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         btn_capture.clicked.connect(lambda: self.stack.setCurrentIndex(1))
@@ -397,8 +416,28 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         print(f"Starting Flask server: {' '.join(cmd)}")
         try:
             self.flask_process = subprocess.Popen(cmd)
+            self._poll_flask_health()
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to start Flask OCR server: {e}")
+
+    def _poll_flask_health(self):
+        """Poll Flask /health endpoint and update status label."""
+        import requests as _requests
+        def check():
+            try:
+                resp = _requests.get("http://localhost:5000/health", timeout=2)
+                if resp.status_code == 200:
+                    self.status_label.setText("🟢 Flask OCR: ready")
+                    self.status_label.setStyleSheet("color: #a6e3a1; font-size: 9pt;")
+                else:
+                    self.status_label.setText("🟡 Flask OCR: initializing...")
+                    self.status_label.setStyleSheet("color: #f9e2af; font-size: 9pt;")
+                    QtCore.QTimer.singleShot(2000, check)
+            except Exception:
+                self.status_label.setText("🔴 Flask OCR: not running")
+                self.status_label.setStyleSheet("color: #f38ba8; font-size: 9pt;")
+                QtCore.QTimer.singleShot(3000, check)
+        QtCore.QTimer.singleShot(2000, check)
 
     def restart_flask_server(self):
         if self.flask_process:
