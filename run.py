@@ -10,9 +10,9 @@ def main():
     if not venv_python.exists():
         venv_python = sys.executable
 
-    app_script = root_dir / "app_main.py"
+    app_script = root_dir / "lingolens_control_center.py"
     
-    print(f"Launching LingoLens using: {venv_python}")
+    print(f"Launching LingoLens Control Center using: {venv_python}")
     cmd = [str(venv_python), str(app_script)]
     
     try:

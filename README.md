@@ -21,19 +21,30 @@ Originally developed with Electron, LingoLens has been fully refactored into a *
 
 ```
 LingoLens/
-├── app_main.py             # PyQt5 Control Center (Main UI & Process Manager)
+├── lingolens_control_center.py # PyQt5 Control Center (Main UI & Process Manager)
 ├── python/
-│   ├── eocr_server.py      # Persistent Flask OCR REST API server
-│   ├── snip0.py            # PyQt5 Screen Snipping & Overlay Widget
-│   ├── text_detector_text.py # OpenVINO Text Detection & Cropping Engine
-│   ├── text_displayer.py   # Multi-threaded Translation & Tkinter Overlay Renderer
-│   └── translate.py        # Multi-service fallback translation module
-├── run.py                  # Python launcher script
-├── run.bat                 # Windows batch launcher
-├── ARCHITECTURE.md         # Technical architecture documentation
-├── DEVELOPMENT_LOG.md      # Development recovery & migration log
-└── MIGRATION_PLAN.md       # Electron-to-Python migration plan
+│   ├── eocr_server.py          # Persistent Flask OCR REST API server
+│   ├── screen_snipper.py       # PyQt5 Screen Snipping & Overlay Widget
+│   ├── text_detector_text.py   # OpenVINO Text Detection & Cropping Engine
+│   ├── text_displayer.py       # Multi-threaded Translation & Tkinter Overlay Renderer
+│   └── translate.py            # Multi-service fallback translation module
+├── run.py                      # Python launcher script
+├── run.bat                     # Windows batch launcher
+├── ARCHITECTURE.md             # Technical architecture documentation
+├── DEVELOPMENT_LOG.md          # Development recovery & migration log
+└── MIGRATION_PLAN.md           # Electron-to-Python migration plan
 ```
+
+---
+
+## ⚙️ Model Weights & Setup
+
+LingoLens relies on **EasyOCR** for text recognition and **OpenVINO** for text detection. Because model weight files are large, they are excluded from the git repository.
+
+1. **EasyOCR Models**: EasyOCR will automatically download required language model weights (e.g., English, Chinese, Japanese, etc.) on first run when `download_enabled=True`. Alternatively, you can download pre-trained weights from the [EasyOCR GitHub Repository](https://github.com/JaidedAI/EasyOCR) and place them in `python/EasyOCR/model/`.
+2. **OpenVINO Models**: Download the required text detection model weights (`.xml` and `.bin`) from the [OpenVINO Open Model Zoo](https://github.com/openvinotoolkit/open_model_zoo) and place them in `python/models/`:
+   - `horizontal-text-detection-0001.xml` & `.bin`
+   - `text-detection-0004.xml` & `.bin`
 
 ---
 

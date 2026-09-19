@@ -70,7 +70,7 @@ QScrollArea {
 }
 """
 
-class LingoLensApp(QtWidgets.QWidget):
+class LingoLensControlCenter(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LingoLens - Next-Gen AI Translation & OCR")
@@ -358,7 +358,7 @@ class LingoLensApp(QtWidgets.QWidget):
         python_executable = Path(__file__).parent / ".venv" / "Scripts" / "python.exe"
         if not python_executable.exists():
             python_executable = sys.executable
-        snip_script = Path(__file__).parent / "python" / "snip0.py"
+        snip_script = Path(__file__).parent / "python" / "screen_snipper.py"
 
         cmd = [
             str(python_executable),
@@ -370,11 +370,11 @@ class LingoLensApp(QtWidgets.QWidget):
             str(self.alpha),
             str(self.font_size)
         ]
-        print(f"Launching snip script: {' '.join(cmd)}")
+        print(f"Launching screen snipper script: {' '.join(cmd)}")
         try:
             self.snip_process = subprocess.Popen(cmd, cwd=str(snip_script.parent))
         except Exception as e:
-            QtWidgets.QMessageBox.warning(self, "Warning", f"Failed to launch snip script: {e}")
+            QtWidgets.QMessageBox.warning(self, "Warning", f"Failed to launch screen snipper script: {e}")
 
     def init_global_hotkey(self):
         if sys.platform == 'win32':
@@ -415,6 +415,6 @@ if sys.platform == 'win32':
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
-    window = LingoLensApp()
+    window = LingoLensControlCenter()
     window.show()
     sys.exit(app.exec_())
