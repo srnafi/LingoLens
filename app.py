@@ -441,7 +441,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         python_executable = Path(__file__).parent / ".venv" / "Scripts" / "python.exe"
         if not python_executable.exists():
             python_executable = sys.executable
-        server_script = Path(__file__).parent / "python" / "eocr_server.py"
+        server_script = Path(__file__).parent / "python" / "ocr_server.py"
         
         cmd = [str(python_executable), str(server_script), str(self.source_lang_option)]
         print(f"Starting Flask server: {' '.join(cmd)}")
@@ -484,7 +484,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         python_executable = Path(__file__).parent / ".venv" / "Scripts" / "python.exe"
         if not python_executable.exists():
             python_executable = sys.executable
-        snip_script = Path(__file__).parent / "python" / "screen_snipper.py"
+        snip_script = Path(__file__).parent / "python" / "capture.py"
 
         cmd = [
             str(python_executable),

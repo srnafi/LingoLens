@@ -21,13 +21,13 @@ Originally developed with Electron, LingoLens has been fully refactored into a *
 
 ```
 LingoLens/
-├── lingolens_control_center.py # PyQt5 Control Center (Main UI & Process Manager)
+├── app.py                      # PyQt5 Control Center (Main UI & Process Manager)
 ├── python/
-│   ├── eocr_server.py          # Persistent Flask OCR REST API server
-│   ├── screen_snipper.py       # PyQt5 Screen Snipping & Overlay Widget
-│   ├── text_detector_text.py   # OpenVINO Text Detection & Cropping Engine
-│   ├── text_displayer.py       # Multi-threaded Translation & Tkinter Overlay Renderer
-│   └── translate.py            # Multi-service fallback translation module
+│   ├── ocr_server.py           # Persistent Flask OCR REST API server
+│   ├── capture.py              # PyQt5 Screen Capture Widget
+│   ├── detector.py             # OpenVINO Text Detection & Cropping Engine
+│   ├── overlay.py              # Paragraph grouping, Translation & Overlay Renderer
+│   └── translator.py           # Multi-service fallback translation module
 ├── run.py                      # Python launcher script
 ├── run.bat                     # Windows batch launcher
 ├── ARCHITECTURE.md             # Technical architecture documentation
