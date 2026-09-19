@@ -29,10 +29,16 @@ def get_detector():
 class TextDetector:
     def __init__(self):
         ie = Core()
-        self.model = ie.read_model(
-            model="models/horizontal-text-detection-0001.xml",
-            weights="models/horizontal-text-detection-0001.bin"
-        )
+        model_path = "models/horizontal-text-detection-0001.xml"
+        weights_path = "models/horizontal-text-detection-0001.bin"
+        if not os.path.exists(model_path) or not os.path.exists(weights_path):
+            raise FileNotFoundError(
+                f"OpenVINO text detection model not found.\n"
+                f"Expected: {model_path}\n"
+                f"Expected: {weights_path}\n"
+                f"Download from: https://github.com/openvinotoolkit/open_model_zoo"
+            )
+        self.model = ie.read_model(model=model_path, weights=weights_path)
         self.execution_net = ie.compile_model(self.model, "CPU")
         self.colors = {"red": (0, 0, 255), "green": (0, 255, 0)}
         self.input_layer = self.model.inputs[0]
