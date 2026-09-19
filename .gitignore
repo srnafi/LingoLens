@@ -57,6 +57,9 @@ python/image1.png
 image1.png
 ocr_results.json
 
+# UI Assets / Screenshots
+pngs/
+
 # Model Weights & Large Archives (downloaded or managed separately)
 python/EasyOCR/model/*.pth
 python/EasyOCR/model/*.zip

@@ -30,7 +30,6 @@ class SnippingWidget(QtWidgets.QWidget):
         self.end = QtCore.QPoint()
 
     def start(self):
-        # self.setWindowFlags(Qt.WindowStaysOnTopHint)
         self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.Window | Qt.WindowStaysOnTopHint)
         SnippingWidget.background = False
         SnippingWidget.is_snipping = True
@@ -38,14 +37,12 @@ class SnippingWidget(QtWidgets.QWidget):
         QtWidgets.QApplication.setOverrideCursor(QtGui.QCursor(QtCore.Qt.CrossCursor))
         self.show()
 
-
     def paintEvent(self, event):
         if SnippingWidget.is_snipping:
             fill_color = (r, g, b, 100)
             opacity = float(op)
             line_width = float(lw)
         else:
-            # reset points, so the rectangle won't show up again.
             self.begin = QtCore.QPoint()
             self.end = QtCore.QPoint()
             fill_color = (0, 0, 0, 0)
@@ -58,7 +55,6 @@ class SnippingWidget(QtWidgets.QWidget):
         qp.setBrush(QtGui.QColor(*fill_color))
         rect = QtCore.QRectF(self.begin, self.end)
         qp.drawRect(rect)
-        
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Q:
@@ -96,18 +92,15 @@ class SnippingWidget(QtWidgets.QWidget):
         # Apply a sharpening filter to enhance edges
         img2 = img2.filter(ImageFilter.SHARPEN)
 
-        print(x1,y1)
+        print(x1, y1)
         QtWidgets.QApplication.processEvents()
         self.close()
 
         selected_directory = Path(__file__).parent
-        # save the image for text detection
         save_path = os.path.join(selected_directory, "image1.png")
-        img.save(save_path,format="png")
+        img.save(save_path, format="png")
 
-        # directly call the text dector class after the snipping is done with the parameters
-        text_detector_text.main(x1=x1, y1=y1, destination=self.destination, alpha=self.alpha, font_size = self.font_size)
-        
+        text_detector_text.main(x1=x1, y1=y1, destination=self.destination, alpha=self.alpha, font_size=self.font_size)
 
 def get_coordinates():
     global x1, y1
@@ -116,24 +109,18 @@ def get_coordinates():
 if __name__ == '__main__':
     app = QApplication(sys.argv)
 
-    # the source language, opacity of the window, border width, window fill color is provided as a commandline arugment
-
     destination = sys.argv[1]
-
     fill_color_hex = sys.argv[2]
     op = sys.argv[3]
     lw = sys.argv[4]
-
     alpha = sys.argv[5]
     font_size = sys.argv[6]
 
-    # Convert the hex color directly to RGB using string slicing
-    fill_color = fill_color_hex.lstrip('#')  # Remove the '#' if it exists
-    r = int(fill_color[0:2], 16)  # First two characters (Red)
-    g = int(fill_color[2:4], 16)  # Middle two characters (Green)
-    b = int(fill_color[4:6], 16)  # Last two characters (Blue)
-    #print(destination)
-    snipping_widget = SnippingWidget(destination=destination,alpha=alpha,font_size=font_size)
+    fill_color = fill_color_hex.lstrip('#')
+    r = int(fill_color[0:2], 16)
+    g = int(fill_color[2:4], 16)
+    b = int(fill_color[4:6], 16)
+
+    snipping_widget = SnippingWidget(destination=destination, alpha=alpha, font_size=font_size)
     snipping_widget.start()
     sys.exit(app.exec_())
-
