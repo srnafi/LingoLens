@@ -78,6 +78,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         super().__init__()
         self.setWindowTitle("LingoLens - Next-Gen AI Translation & OCR")
         self.resize(800, 600)
+        self.setMinimumSize(700, 500)
         self.setStyleSheet(DARK_STYLESHEET)
 
         # State variables & advanced customization defaults
@@ -143,6 +144,27 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         except Exception as e:
             print(f"Failed to load settings: {e}")
 
+    def reset_defaults(self):
+        """Reset all settings to factory defaults."""
+        self.source_lang_option = 1
+        self.dest_lang = "en"
+        self.fill_color = "#ff0000"
+        self.text_color = "#000000"
+        self.opacity = 0.3
+        self.line_width = 3
+        self.alpha = 0.7
+        self.font_size = 12
+        # Update UI
+        self.opacity_slider.setValue(30)
+        self.linewidth_slider.setValue(3)
+        self.alpha_slider.setValue(70)
+        self.fontsize_slider.setValue(12)
+        self.color_btn.setText("Pick Color (#ff0000)")
+        self.text_color_btn.setText("Pick Text Color (#000000)")
+        self.save_settings()
+        self.restart_flask_server()
+        print("Settings reset to defaults")
+
     def init_ui(self):
         # Sidebar Navigation Panel
         sidebar = QtWidgets.QVBoxLayout()
@@ -168,6 +190,10 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         """)
         btn_snip_now.clicked.connect(self.trigger_snip)
 
+        btn_reset = QtWidgets.QPushButton("↺ Reset Defaults")
+        btn_reset.setStyleSheet("color: #f38ba8; font-size: 9pt;")
+        btn_reset.clicked.connect(self.reset_defaults)
+
         for btn in (btn_ocr, btn_capture, btn_overlay):
             btn.setStyleSheet("text-align: left; padding: 10px; border-radius: 6px;")
 
@@ -175,6 +201,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         sidebar.addWidget(btn_capture)
         sidebar.addWidget(btn_overlay)
         sidebar.addStretch()
+        sidebar.addWidget(btn_reset)
         sidebar.addWidget(btn_snip_now)
 
         sidebar_widget = QtWidgets.QWidget()
@@ -285,6 +312,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         self.opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.opacity_slider.setRange(0, 100)
         self.opacity_slider.setValue(30)
+        self.opacity_slider.setToolTip("Controls how visible the selection box is while drawing")
         self.opacity_slider.valueChanged.connect(self.update_opacity)
         custom_layout.addWidget(self.opacity_slider)
 
@@ -292,6 +320,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         self.linewidth_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.linewidth_slider.setRange(1, 10)
         self.linewidth_slider.setValue(3)
+        self.linewidth_slider.setToolTip("Thickness of the selection box border")
         self.linewidth_slider.valueChanged.connect(self.update_linewidth)
         custom_layout.addWidget(self.linewidth_slider)
         
@@ -311,6 +340,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         self.alpha_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.alpha_slider.setRange(0, 100)
         self.alpha_slider.setValue(70)
+        self.alpha_slider.setToolTip("Transparency of the translated text overlay windows")
         self.alpha_slider.valueChanged.connect(self.update_alpha)
         font_layout.addWidget(self.alpha_slider)
 
@@ -318,6 +348,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         self.fontsize_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.fontsize_slider.setRange(5, 25)
         self.fontsize_slider.setValue(12)
+        self.fontsize_slider.setToolTip("Size of the translated text displayed on screen")
         self.fontsize_slider.valueChanged.connect(self.update_fontsize)
         font_layout.addWidget(self.fontsize_slider)
 
