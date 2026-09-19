@@ -1,10 +1,13 @@
 import sys
 import os
+import json
 import subprocess
 import ctypes
 import ctypes.wintypes
 from pathlib import Path
 from PyQt5 import QtWidgets, QtCore, QtGui
+
+SETTINGS_FILE = Path(__file__).parent / "settings.json"
 
 # Modern Dark Theme Stylesheet (Catppuccin Mocha aesthetic)
 DARK_STYLESHEET = """
@@ -92,8 +95,53 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         self.nativeEventFilter = None
 
         self.init_ui()
+        self.load_settings()
         self.start_flask_server()
         self.init_global_hotkey()
+
+    def save_settings(self):
+        """Persist user preferences to disk."""
+        settings = {
+            "source_lang_option": self.source_lang_option,
+            "dest_lang": self.dest_lang,
+            "fill_color": self.fill_color,
+            "text_color": self.text_color,
+            "opacity": self.opacity,
+            "line_width": self.line_width,
+            "alpha": self.alpha,
+            "font_size": self.font_size,
+        }
+        try:
+            with open(SETTINGS_FILE, 'w') as f:
+                json.dump(settings, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save settings: {e}")
+
+    def load_settings(self):
+        """Load user preferences from disk if available."""
+        if not SETTINGS_FILE.exists():
+            return
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+            self.source_lang_option = settings.get("source_lang_option", 1)
+            self.dest_lang = settings.get("dest_lang", "en")
+            self.fill_color = settings.get("fill_color", "#ff0000")
+            self.text_color = settings.get("text_color", "#000000")
+            self.opacity = settings.get("opacity", 0.3)
+            self.line_width = settings.get("line_width", 3)
+            self.alpha = settings.get("alpha", 0.7)
+            self.font_size = settings.get("font_size", 12)
+            # Update UI sliders to reflect loaded values
+            self.opacity_slider.setValue(int(self.opacity * 100))
+            self.linewidth_slider.setValue(self.line_width)
+            self.alpha_slider.setValue(int(self.alpha * 100))
+            self.fontsize_slider.setValue(self.font_size)
+            self.color_btn.setText(f"Pick Color ({self.fill_color})")
+            self.text_color_btn.setText(f"Pick Text Color ({self.text_color})")
+            print(f"Settings loaded from {SETTINGS_FILE}")
+        except Exception as e:
+            print(f"Failed to load settings: {e}")
 
     def init_ui(self):
         main_layout = QtWidgets.QHBoxLayout(self)
@@ -297,6 +345,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         btn.setChecked(True)
         self.source_lang_option = val
         print(f"Source language option updated: {val}")
+        self.save_settings()
         self.restart_flask_server()
 
     def set_dest_language(self, lang, btn):
@@ -306,30 +355,37 @@ class LingoLensControlCenter(QtWidgets.QWidget):
         btn.setChecked(True)
         self.dest_lang = lang
         print(f"Destination language updated: {lang}")
+        self.save_settings()
 
     def pick_color(self):
         col = QtWidgets.QColorDialog.getColor()
         if col.isValid():
             self.fill_color = col.name()
             self.color_btn.setText(f"Pick Color ({self.fill_color})")
+            self.save_settings()
 
     def pick_text_color(self):
         col = QtWidgets.QColorDialog.getColor()
         if col.isValid():
             self.text_color = col.name()
             self.text_color_btn.setText(f"Pick Text Color ({self.text_color})")
+            self.save_settings()
 
     def update_opacity(self, val):
         self.opacity = val / 100.0
+        self.save_settings()
 
     def update_linewidth(self, val):
         self.line_width = val
+        self.save_settings()
 
     def update_alpha(self, val):
         self.alpha = val / 100.0
+        self.save_settings()
 
     def update_fontsize(self, val):
         self.font_size = val
+        self.save_settings()
 
     def start_flask_server(self):
         python_executable = Path(__file__).parent / ".venv" / "Scripts" / "python.exe"
@@ -368,7 +424,8 @@ class LingoLensControlCenter(QtWidgets.QWidget):
             str(self.opacity),
             str(self.line_width),
             str(self.alpha),
-            str(self.font_size)
+            str(self.font_size),
+            str(self.text_color),
         ]
         print(f"Launching screen snipper script: {' '.join(cmd)}")
         try:

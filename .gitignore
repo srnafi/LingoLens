@@ -71,6 +71,7 @@ python/models/*.zip
 
 # Secrets and Local Environment Configuration
 .env
+settings.json
 
 # Node / Electron
 node_modules/
