@@ -136,6 +136,14 @@ def _line_bbox(line_words):
             max(w['y_max'] for w in line_words))
 
 
+def _paragraph_bbox(para_lines):
+    x_min = min(w['x_min'] for line in para_lines for w in line)
+    y_min = min(w['y_min'] for line in para_lines for w in line)
+    x_max = max(w['x_max'] for line in para_lines for w in line)
+    y_max = max(w['y_max'] for line in para_lines for w in line)
+    return x_min, y_min, x_max, y_max
+
+
 def _estimate_font_size(words):
     if not words:
         return 12
