@@ -1,6 +1,9 @@
 import sys
 import os
 import ctypes
+import logging
+import logging.handlers
+from pathlib import Path
 
 # Set DPI awareness BEFORE any Qt or PIL imports.
 # On Windows with display scaling, coordinates from Qt widgets,
@@ -18,12 +21,21 @@ from PyQt5.QtWidgets import QApplication
 import pyautogui
 from PIL import Image, ImageGrab, ImageFilter
 from PyQt5 import QtWidgets, QtCore, QtGui
-from pathlib import Path
-import logging
 
-logging.basicConfig(level=logging.DEBUG,
-                    format='[%(name)s] %(levelname)s: %(message)s')
+_this_dir = Path(__file__).parent
+
+# Rotating file logging so headless runs (launched from the Control Center)
+# still leave a traceable record. Console logging is invisible in that mode.
+_logs_dir = _this_dir / "logs"
+_logs_dir.mkdir(parents=True, exist_ok=True)
+_file_handler = logging.handlers.RotatingFileHandler(
+    _logs_dir / "lingolens.log", maxBytes=1_000_000, backupCount=3)
+_file_handler.setFormatter(
+    logging.Formatter('[%(name)s] %(levelname)s: %(message)s'))
+
 logger = logging.getLogger('capture')
+logger.setLevel(logging.DEBUG)
+logger.addHandler(_file_handler)
 
 import detector
 
@@ -158,6 +170,8 @@ class CaptureWidget(QtWidgets.QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    app.setAttribute(Qt.AA_DisableHighDpiScaling, True)
 
     destination = sys.argv[1] if len(sys.argv) > 1 else "en"
     fill_color_hex = sys.argv[2] if len(sys.argv) > 2 else "#ff0000"

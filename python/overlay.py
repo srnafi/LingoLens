@@ -2,6 +2,7 @@ import sys
 import os
 import ctypes
 import logging
+import logging.handlers
 import requests
 import time
 import cv2
@@ -17,12 +18,9 @@ except Exception:
     except Exception:
         pass
 
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLabel,
-        QSizePolicy, QFrame)
-from PyQt5.QtCore import (Qt, QPoint, QRect, QSize, QTimer, pyqtSignal,
-        pyqtSlot, QObject)
-from PyQt5.QtGui import (QPixmap, QPainter, QColor, QFont, QPen,
-        QBrush, QImage, QPalette)
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPixmap
+from PyQt5.QtWidgets import QApplication, QWidget
 
 # Ensure path is set for imports
 _this_dir = Path(__file__).parent
@@ -32,6 +30,21 @@ if str(_this_dir) not in sys.path:
 from translator import translate_text
 
 logger = logging.getLogger('overlay_qt')
+
+# ---------------------------------------------------------------------------
+# Module-level registry of live overlays (defect 1 fix).
+# The overlay is kept alive here until the user dismisses it, preventing
+# Python garbage-collection of the parentless top-level widget.
+# ---------------------------------------------------------------------------
+_OVERLAYS = []
+
+# ---------------------------------------------------------------------------
+# Debug helpers (defect: add debug outline mode + file logging)
+# ---------------------------------------------------------------------------
+LOGS_DIR = _this_dir / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+_DEBUG_OUTLINE = os.environ.get("LINGOLENS_DEBUG_OUTLINE", "") == "1"
 
 FLASK_URL = "http://localhost:5000"
 FLASK_HEALTH_TIMEOUT = 30
@@ -211,25 +224,16 @@ class OverlayWindow(QWidget):
         self.alpha = float(alpha)
         self.text_color = QColor(text_color)
 
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
 
         self.resize(self.snip_width, self.snip_height)
         self.move(self.screen_x, self.screen_y)
 
         self._pixmap = QPixmap(self.snip_width, self.snip_height)
         self._pixmap.fill(Qt.transparent)
-
-        self.setPalette(QPalette(Qt.black))
-        self.setAutoFillBackground(False)
-
-        self._init_timer = QTimer()
-        self._init_timer.timeout.connect(self._ensure_paint)
-        self._init_timer.start(50)
-
-    def _ensure_paint(self):
-        self._init_timer.stop()
-        self.update()
 
     def update_overlay(self, screen_x, screen_y, capture_img,
                        ocr_words, paragraphs, translated,
@@ -266,7 +270,7 @@ class OverlayWindow(QWidget):
             logger.error(f"OpenCV not available: {e}")
             painter = QPainter(self._pixmap)
             painter.setPen(self.text_color)
-            painter.setFont(QFont("fixedsys", max(est_font_size, font_size_override)))
+            painter.setFont(QFont("Arial", max(est_font_size, font_size_override)))
             painter.drawText(self._pixmap.rect(), Qt.AlignLeft, "OCR unavailable")
             painter.end()
             self.update()
@@ -314,15 +318,10 @@ class OverlayWindow(QWidget):
             dx = px_min
             dy = py_min
 
-            font = QFont("fixedsys", use_font_size)
-
-            outline_pen = QPen(self.text_color.darker(150), 2)
-            painter.setPen(outline_pen)
-            painter.setFont(font)
-            painter.drawText(dx, dy, t_text)
-
+            font = QFont("Arial", use_font_size)
             painter.setPen(self.text_color)
-            painter.drawText(dx + 1, dy + 1, t_text)
+            painter.setFont(font)
+            painter.drawText(px_min, py_min, t_text)
 
         painter.end()
 
@@ -331,13 +330,28 @@ class OverlayWindow(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
         painter.drawPixmap(self.rect(), self._pixmap)
         painter.end()
 
-    def mousePressEvent(self, event):
-        pass
+        if _DEBUG_OUTLINE:
+            p = QPainter(self)
+            p.setPen(QColor(0, 255, 255))
+            p.drawRect(0, 0, self.snip_width - 1, self.snip_height - 1)
+            p.end()
 
-    def mouseDoubleClickEvent(self, event):
+    def mousePressEvent(self, event):
+        """Any mouse button dismisses the overlay (defect 6 fix)."""
+        self._dismiss()
+
+    def keyPressEvent(self, event):
+        """Esc or Q dismisses the overlay (defect 6 fix)."""
+        if event.key() in (Qt.Key_Escape, Qt.Key_Q):
+            self._dismiss()
+
+    def _dismiss(self):
+        if self in _OVERLAYS:
+            _OVERLAYS.remove(self)
         self.close()
 
 
@@ -371,21 +385,25 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
 
     if not _wait_for_flask():
         logger.error("Flask OCR server not ready")
+        _quit_and_return()
         return
 
     crops_folder = _this_dir / "crops"
     if not crops_folder.exists():
         logger.error("Crops folder not found")
+        _quit_and_return()
         return
 
     ocr_results = _run_ocr(str(crops_folder))
     if not ocr_results:
         logger.warning("No OCR results from Flask")
+        _quit_and_return()
         return
 
     words = _parse_ocr_results(ocr_results)
     if not words:
         logger.warning("No valid OCR words")
+        _quit_and_return()
         return
 
     lines = _group_words_into_lines(words)
@@ -410,28 +428,31 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
             idx, text = f.result()
             translated[idx] = text
 
-    # Determine snip image for background reconstruction
+    # Load captured image -- use actual image dimensions for window geometry
+    # (NOT OCR box extents + 40). (defect 2 fix)
     import numpy as np
     from PIL import Image
     capture_path = image_path or str(_this_dir / "image1.png")
     if not os.path.exists(capture_path):
         logger.error("No captured image (image1.png not found). Run a snip first.")
+        _quit_and_return()
         return
 
     capture_pil = Image.open(capture_path).convert("RGB")
     capture_np = np.array(capture_pil)  # RGB
     capture_bgr = cv2.cvtColor(capture_np, cv2.COLOR_RGB2BGR)
 
-    # Determine snip dimensions from OCR word bounding boxes
-    all_x_min = min(w['x_min'] for w in words)
-    all_y_min = min(w['y_min'] for w in words)
-    all_x_max = max(w['x_max'] for w in words)
-    all_y_max = max(w['y_max'] for w in words)
+    snip_h_img, snip_w_img = capture_bgr.shape[:2]
 
-    snip_w = max(1, all_x_max - all_x_min + 40)
-    snip_h = max(1, all_y_max - all_y_min + 40)
+    if snip_w_img <= 0 or snip_h_img <= 0:
+        logger.error(f"Invalid snip dimensions: {snip_w_img}x{snip_h_img}")
+        _quit_and_return()
+        return
 
-    overlay = OverlayWindow(screen_x, screen_y, snip_w, snip_h,
+    logger.info(f"Window geometry: {snip_w_img}x{snip_h_img} at "
+                f"({screen_x},{screen_y})")
+
+    overlay = OverlayWindow(screen_x, screen_y, snip_w_img, snip_h_img,
                             alpha=alpha, text_color=text_color)
 
     use_font = max(est_font, font_size)
@@ -447,30 +468,57 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
         font_size_override=font_size,
     )
 
+    # Register the overlay so it is not garbage-collected (defect 1 fix).
+    _OVERLAYS.append(overlay)
+    overlay.destroyed.connect(lambda *_: _on_overlay_closed(overlay))
+
     overlay.show()
-
-    def dismiss(event=None):
-        try:
-            overlay.close()
-        except Exception:
-            pass
-    overlay.installEventFilter(_DismissFilter(overlay))
+    overlay.raise_()
+    overlay.activateWindow()
 
 
-class _DismissFilter(QObject):
-    def __init__(self, widget):
-        super().__init__()
-        self.widget = widget
+# ---------------------------------------------------------------------------
+# Lifecycle helpers (defined after show_translations for readability;
+# Python resolves them at call time so the forward reference above is safe)
+# ---------------------------------------------------------------------------
 
-    def eventFilter(self, obj, event):
-        if event.type() == 17:
-            if event.button() == Qt.LeftButton:
-                self.widget.close()
-        return False
+def _on_overlay_closed(overlay):
+    """Remove overlay from registry; quit app when the last one closes."""
+    if overlay in _OVERLAYS:
+        _OVERLAYS.remove(overlay)
+    _maybe_quit()
 
+
+def _maybe_quit():
+    """Quit the Qt event loop when no overlays remain."""
+    if not _OVERLAYS:
+        QTimer.singleShot(0, QApplication.instance().quit)
+
+
+def _quit_and_return():
+    """Helper for early-exit paths: ensure the process can terminate."""
+    _maybe_quit()
+
+
+# ---------------------------------------------------------------------------
+# Dead-code removal (spec section 4.3):
+#   _DismissFilter class -- deleted (was checking QEvent.Show == type 17,
+#     not a mouse press; instance had no parent so it was GC'd).
+#   _init_timer / _ensure_paint -- deleted (unreliable, not in spec).
+#   dismiss closure + installEventFilter call -- deleted (replaced by
+#     mousePressEvent / keyPressEvent on OverlayWindow).
+# Dismissal is now via mousePressEvent (any button) and keyPressEvent
+# (Esc or Q) on OverlayWindow itself.
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    app.setAttribute(Qt.AA_DisableHighDpiScaling, True)
     w = OverlayWindow(100, 100, 800, 600, alpha=0.9, text_color="#ffffff")
+    _OVERLAYS.append(w)
+    w.destroyed.connect(lambda *_: _on_overlay_closed(w))
     w.show()
+    w.raise_()
+    w.activateWindow()
     sys.exit(app.exec_())
