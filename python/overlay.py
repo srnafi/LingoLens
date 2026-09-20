@@ -1,79 +1,52 @@
-import tkinter as tk
-import ctypes
-import requests
-import os
 import sys
-import time
+import os
+import ctypes
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
 from pathlib import Path
 
+# Set DPI awareness BEFORE any Qt imports
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLabel,
+        QSizePolicy, QFrame)
+from PyQt5.QtCore import (Qt, QPoint, QRect, QSize, QTimer, pyqtSignal,
+        pyqtSlot)
+from PyQt5.QtGui import (QPixmap, QPainter, QColor, QFont, QPen,
+        QBrush, QImage, QPalette)
+
+# Ensure path is set for imports
 _this_dir = Path(__file__).parent
 if str(_this_dir) not in sys.path:
     sys.path.insert(0, str(_this_dir))
 
 from translator import translate_text
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('overlay_qt')
 
-_tk_root = None
 FLASK_URL = "http://localhost:5000"
 FLASK_HEALTH_TIMEOUT = 30
 
 
-def _get_tk_root():
-    global _tk_root
-    if _tk_root is None:
-        _tk_root = tk.Tk()
-        _tk_root.withdraw()
-    return _tk_root
-
-
 # ---------------------------------------------------------------------------
-# Timing helper
+# OCR via Flask
 # ---------------------------------------------------------------------------
-
-class StageTimer:
-    """Measures time for each pipeline stage."""
-    def __init__(self):
-        self.stages = []
-        self._start = time.time()
-
-    def mark(self, name):
-        now = time.time()
-        elapsed = now - self._start
-        self.stages.append((name, elapsed))
-        self._start = now
-        return elapsed
-
-    def report(self):
-        lines = ["Pipeline timing:"]
-        prev = 0
-        for name, t in self.stages:
-            dt = t - prev
-            lines.append(f"  {name}: {dt*1000:.0f}ms (cumulative: {t*1000:.0f}ms)")
-            prev = t
-        return '\n'.join(lines)
-
-
-# ---------------------------------------------------------------------------
-# OCR via Flask — with background health check
-# ---------------------------------------------------------------------------
-
-def _check_flask_health():
-    """Check if Flask is ready. Returns True/False, no waiting."""
-    try:
-        resp = requests.get(f"{FLASK_URL}/health", timeout=2)
-        return resp.status_code == 200
-    except Exception:
-        return False
-
 
 def _wait_for_flask(timeout=FLASK_HEALTH_TIMEOUT):
     start = time.time()
     while time.time() - start < timeout:
-        if _check_flask_health():
-            return True
+        try:
+            resp = requests.get(f"{FLASK_URL}/health", timeout=2)
+            if resp.status_code == 200:
+                return True
+        except Exception:
+            pass
         time.sleep(0.3)
     return False
 
@@ -93,7 +66,7 @@ def _run_ocr(folder_location):
 
 
 # ---------------------------------------------------------------------------
-# OCR result parsing
+# OCR result parsing & grouping
 # ---------------------------------------------------------------------------
 
 def _parse_ocr_results(ocr_results):
@@ -116,50 +89,28 @@ def _parse_ocr_results(ocr_results):
     return [w for w in words if w['text']]
 
 
-# ---------------------------------------------------------------------------
-# Text grouping: words -> lines -> paragraphs
-# ---------------------------------------------------------------------------
-
 def _group_words_into_lines(words):
-    """Group words into lines based on vertical alignment."""
     if not words:
         return []
-
     words.sort(key=lambda w: (w['cy'], w['cx']))
     lines = [[words[0]]]
-
     for word in words[1:]:
         line = lines[-1]
         avg_cy = sum(w['cy'] for w in line) / len(line)
         avg_h = sum(w['height'] for w in line) / len(line)
-
         if abs(word['cy'] - avg_cy) < avg_h * 0.5:
             lines[-1].append(word)
         else:
             lines.append([word])
-
     for line in lines:
         line.sort(key=lambda w: w['cx'])
-
     return lines
 
 
-def _line_bbox(line_words):
-    return (
-        min(w['x_min'] for w in line_words),
-        min(w['y_min'] for w in line_words),
-        max(w['x_max'] for w in line_words),
-        max(w['y_max'] for w in line_words),
-    )
-
-
 def _group_lines_into_paragraphs(lines):
-    """Group lines into paragraphs based on vertical spacing."""
     if not lines:
         return []
-
     paragraphs = [[lines[0]]]
-
     for i in range(1, len(lines)):
         prev = lines[i - 1]
         curr = lines[i]
@@ -168,35 +119,20 @@ def _group_lines_into_paragraphs(lines):
         prev_h = max(w['y_max'] for w in prev) - min(w['y_min'] for w in prev)
         curr_h = max(w['y_max'] for w in curr) - min(w['y_min'] for w in curr)
         avg_h = (prev_h + curr_h) / 2
-
         gap = curr_y_min - prev_y_max
         if gap < avg_h * 1.2:
             paragraphs[-1].append(curr)
         else:
             paragraphs.append([curr])
-
     return paragraphs
 
 
-def _paragraph_bbox(para_lines):
-    x_min = min(w['x_min'] for line in para_lines for w in line)
-    y_min = min(w['y_min'] for line in para_lines for w in line)
-    x_max = max(w['x_max'] for line in para_lines for w in line)
-    y_max = max(w['y_max'] for line in para_lines for w in line)
-    return x_min, y_min, x_max, y_max
+def _line_bbox(line_words):
+    return (min(w['x_min'] for w in line_words),
+            min(w['y_min'] for w in line_words),
+            max(w['x_max'] for w in line_words),
+            max(w['y_max'] for w in line_words))
 
-
-def _line_text(line_words):
-    return ' '.join(w['text'] for w in line_words)
-
-
-def _paragraph_text(para_lines):
-    return '\n'.join(_line_text(line) for line in para_lines)
-
-
-# ---------------------------------------------------------------------------
-# Font size estimation
-# ---------------------------------------------------------------------------
 
 def _estimate_font_size(words):
     if not words:
@@ -207,33 +143,189 @@ def _estimate_font_size(words):
 
 
 # ---------------------------------------------------------------------------
-# Single-window overlay
+# Background reconstruction using OpenCV
 # ---------------------------------------------------------------------------
 
-def _create_overlay_window(screen_x, screen_y, snip_width, snip_height, alpha):
-    root = _get_tk_root()
-    win = tk.Toplevel(root)
-    win.geometry(f'{snip_width}x{snip_height}+{screen_x}+{screen_y}')
-    win.overrideredirect(True)
-    win.attributes('-alpha', alpha)
-    win.attributes('-topmost', True)
-    win.wm_attributes('-transparentcolor', 'white')
+def _reconstruct_background(capture_img, text_regions):
+    """Remove source text from captured image by inpainting.
 
-    canvas = tk.Canvas(win, width=snip_width, height=snip_height,
-                       highlightthickness=0, bg='white')
-    canvas.pack()
-    return win, canvas
+    Parameters
+    ----------
+    capture_img : np.ndarray
+        BGR image from the snipped region.
+    text_regions : list of dict
+        Each dict has 'x_min', 'x_max', 'y_min', 'y_max' in capture-relative coords.
+
+    Returns
+    -------
+    np.ndarray
+        Image with source text regions replaced by reconstructed background.
+    """
+    import numpy as np
+    import cv2
+    img = capture_img.copy()
+    for reg in text_regions:
+        x1, y1, x2, y2 = reg['x_min'], reg['y_min'], reg['x_max'], reg['y_max']
+        exp = max(1, int(min(reg['width'], reg['height']) * 0.15))
+        x1e, y1e = max(0, x1 - exp), max(0, y1 - exp)
+        x2e, y2e = min(capture_img.shape[1], x2 + exp), min(capture_img.shape[0], y2 + exp)
+        if x2e > x1e and y2e > y1e:
+            mask = np.zeros(img.shape[:2], dtype=np.uint8)
+            cv2.rectangle(mask, (x1e, y1e), (x2e, y2e), 255, -1)
+            img = cv2.inpaint(img, mask, 3, cv2.INPAINT_TELEA)
+    return img
 
 
-def _measure_text(text, font_size):
-    root = _get_tk_root()
-    label = tk.Label(root, text=text, font=("fixedsys", font_size))
-    label.pack()
-    root.update_idletasks()
-    w = label.winfo_reqwidth()
-    h = label.winfo_reqheight()
-    label.destroy()
-    return w, h
+# ---------------------------------------------------------------------------
+# Main overlay window using PyQt5 image compositing
+# ---------------------------------------------------------------------------
+
+class OverlayWindow(QWidget):
+    """Single transparent overlay window displaying translated screen region.
+
+    The window exactly matches the snipped region's position and dimensions.
+    Inside, a composite image is shown: original background with source text
+    regions removed (via OpenCV inpainting), and translated text drawn at
+    source-relative positions.
+    """
+
+    def __init__(self, screen_x, screen_y, snip_width, snip_height,
+                 alpha=0.9, text_color="#000000"):
+        super().__init__()
+
+        self.screen_x = int(screen_x)
+        self.screen_y = int(screen_y)
+        self.snip_width = max(1, int(snip_width))
+        self.snip_height = max(1, int(snip_height))
+        self.alpha = float(alpha)
+        self.text_color = QColor(text_color)
+
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+        self.resize(self.snip_width, self.snip_height)
+        self.move(self.screen_x, self.screen_y)
+
+        self._pixmap = QPixmap(self.snip_width, self.snip_height)
+        self._pixmap.fill(Qt.transparent)
+
+        self.setPalette(Qt.black)
+        self.setAutoFillBackground(False)
+
+        self._init_timer = QTimer()
+        self._init_timer.timeout.connect(self._ensure_paint)
+        self._init_timer.start(50)
+
+    def _ensure_paint(self):
+        self._init_timer.stop()
+        self.update()
+
+    def update_overlay(self, screen_x, screen_y, capture_img,
+                       ocr_words, paragraphs, translated,
+                       est_font_size, font_size_override):
+        """Update the overlay with new translation data.
+
+        Parameters
+        ----------
+        screen_x, screen_y : int
+            Top-left of snipped region on screen.
+        capture_img : np.ndarray
+            BGR image from the snipped region (height x width x 3).
+        ocr_words : list[dict]
+            Parsed OCR words with 'x_min','y_min','x_max','y_max','text'.
+        paragraphs : list[list[dict]]
+            Grouped paragraphs, each a list of word dicts.
+        translated : dict
+            {para_idx: translated_text}
+        est_font_size : int
+            Estimated source font size from OCR geometry.
+        font_size_override : int
+            User-specified font size (preferred over est).
+        """
+        self.screen_x = int(screen_x)
+        self.screen_y = int(screen_y)
+        self.resize(max(1, self.snip_width), max(1, self.snip_height))
+        self.move(self.screen_x, self.screen_y)
+
+        # ---- 1. Reconstruct background: remove source text ----
+        try:
+            import numpy as np
+            import cv2
+        except Exception as e:
+            logger.error(f"OpenCV not available: {e}")
+            painter = QPainter(self._pixmap)
+            painter.setPen(self.text_color)
+            painter.setFont(QFont("fixedsys", max(est_font_size, font_size_override)))
+            painter.drawText(self._pixmap.rect(), Qt.AlignLeft, "OCR unavailable")
+            painter.end()
+            self.update()
+            return
+
+        img_bgr = capture_img.copy()
+        regions = []
+        for w in ocr_words:
+            regions.append({
+                'x_min': w['x_min'], 'y_min': w['y_min'],
+                'x_max': w['x_max'], 'y_max': w['y_max'],
+            })
+
+        img_recon = _reconstruct_background(img_bgr, regions)
+
+        img_rgb = cv2.cvtColor(img_recon, cv2.COLOR_BGR2RGB)
+        h, w, ch = img_rgb.shape
+        bytes_per_line = ch * w
+
+        qimg = QImage(img_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        pm = QPixmap.fromImage(qimg)
+
+        # ---- 2. Render translated text onto the pixmap ----
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        use_font_size = max(int(est_font_size), int(font_size_override))
+
+        for p_idx, para_lines in enumerate(paragraphs):
+            all_w = [w for line in para_lines for w in line]
+            if not all_w:
+                continue
+            px_min = min(w['x_min'] for w in all_w)
+            py_min = min(w['y_min'] for w in all_w)
+            px_max = max(w['x_max'] for w in all_w)
+            py_max = max(w['y_max'] for w in all_w)
+
+            t_text = translated.get(p_idx, "")
+            if not t_text:
+                t_text = ' '.join(w['text'] for w in all_w)
+
+            dx = px_min
+            dy = py_min
+
+            font = QFont("fixedsys", use_font_size)
+
+            outline_pen = QPen(self.text_color.darker(150), 2)
+            painter.setPen(outline_pen)
+            painter.setFont(font)
+            painter.drawText(dx, dy, t_text)
+
+            painter.setPen(self.text_color)
+            painter.drawText(dx + 1, dy + 1, t_text)
+
+        painter.end()
+
+        self._pixmap = pm
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.drawPixmap(self.rect(), self._pixmap)
+        painter.end()
+
+    def mousePressEvent(self, event):
+        pass
+
+    def mouseDoubleClickEvent(self, event):
+        self.close()
 
 
 # ---------------------------------------------------------------------------
@@ -242,21 +334,17 @@ def _measure_text(text, font_size):
 
 def show_translations(screen_x, screen_y, dest, alpha, font_size,
                       text_color="#000000"):
-    """Parallel pipeline: detect → OCR → translate → render.
+    """Full pipeline: capture → OCR → group → translate → composite overlay.
 
-    Stages:
-    1. Flask health check (parallel with other work)
-    2. OCR (single HTTP POST)
-    3. Parse + group (CPU-bound, fast)
-    4. Translate paragraphs (parallel ThreadPoolExecutor)
-    5. Render to single canvas
+    Creates ONE transparent overlay window exactly matching the snipped region.
+    All translated text is drawn at source-relative positions on a reconstructed
+    background (source text removed via OpenCV inpainting, background preserved).
     """
     screen_x = int(screen_x)
     screen_y = int(screen_y)
     alpha = float(alpha)
     font_size = int(font_size)
 
-    timer = StageTimer()
     logger.info(f"show_translations: screen=({screen_x},{screen_y}), "
                 f"dest={dest}, alpha={alpha}, font_size={font_size}")
 
@@ -268,23 +356,20 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
         except Exception:
             pass
 
-    crops_folder = _this_dir / "crops"
-
-    # Stage 1: Wait for Flask (non-blocking check loop)
     if not _wait_for_flask():
         logger.error("Flask OCR server not ready")
         return
-    timer.mark("Flask health check")
 
-    # Stage 2: Run OCR (single blocking HTTP POST)
-    ocr_results = _run_ocr(str(crops_folder))
-    timer.mark(f"OCR ({len(ocr_results)} words)")
-
-    if not ocr_results:
-        logger.warning("No OCR results")
+    crops_folder = _this_dir / "crops"
+    if not crops_folder.exists():
+        logger.error("Crops folder not found")
         return
 
-    # Stage 3: Parse + group (fast CPU work)
+    ocr_results = _run_ocr(str(crops_folder))
+    if not ocr_results:
+        logger.warning("No OCR results from Flask")
+        return
+
     words = _parse_ocr_results(ocr_results)
     if not words:
         logger.warning("No valid OCR words")
@@ -293,11 +378,12 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
     lines = _group_words_into_lines(words)
     paragraphs = _group_lines_into_paragraphs(lines)
     est_font = _estimate_font_size(words)
-    timer.mark(f"Parse+group ({len(lines)} lines, {len(paragraphs)} paras)")
 
-    # Stage 4: Translate all paragraphs in parallel
+    logger.info(f"Grouped: {len(words)} words → {len(lines)} lines → {len(paragraphs)} paragraphs")
+
+    # Translate each paragraph (parallel)
     def translate_para(idx, para):
-        text = _paragraph_text(para)
+        text = ' '.join(w['text'] for w in para)
         return idx, translate_text(text, dest)
 
     translated = {}
@@ -308,80 +394,67 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
         for f in as_completed(futures):
             idx, text = f.result()
             translated[idx] = text
-    timer.mark(f"Translate ({len(paragraphs)} paras, {n_workers} workers)")
 
-    # Stage 5: Render to single canvas
+    # Determine snip image for background reconstruction
+    import numpy as np
+    from PIL import Image
+    capture_path = str(_this_dir / "image1.png")
+    if not os.path.exists(capture_path):
+        logger.error("No captured image (image1.png not found). Run a snip first.")
+        return
+
+    capture_pil = Image.open(capture_path).convert("RGB")
+    capture_np = np.array(capture_pil)  # RGB
+    capture_bgr = cv2.cvtColor(capture_np, cv2.COLOR_RGB2BGR)
+
+    # Determine snip dimensions from OCR word bounding boxes
     all_x_min = min(w['x_min'] for w in words)
     all_y_min = min(w['y_min'] for w in words)
     all_x_max = max(w['x_max'] for w in words)
     all_y_max = max(w['y_max'] for w in words)
 
-    margin = 20
-    snip_w = all_x_max - all_x_min + margin * 2
-    snip_h = all_y_max - all_y_min + margin * 2
-    overlay_x = all_x_min + screen_x - margin
-    overlay_y = all_y_min + screen_y - margin
+    snip_w = max(1, all_x_max - all_x_min + 40)
+    snip_h = max(1, all_y_max - all_y_min + 40)
 
-    win, canvas = _create_overlay_window(
-        overlay_x, overlay_y, snip_w, snip_h, alpha)
+    overlay = OverlayWindow(screen_x, screen_y, snip_w, snip_h,
+                            alpha=alpha, text_color=text_color)
 
-    use_font_size = max(est_font, font_size)
+    use_font = max(est_font, font_size)
 
-    for para_idx, para_lines in enumerate(paragraphs):
-        bbox = _paragraph_bbox(para_lines)
-        px_min, py_min, px_max, py_max = bbox
+    overlay.update_overlay(
+        screen_x=screen_x,
+        screen_y=screen_y,
+        capture_img=capture_bgr,
+        ocr_words=words,
+        paragraphs=paragraphs,
+        translated=translated,
+        est_font_size=est_font,
+        font_size_override=font_size,
+    )
 
-        draw_x = px_min - all_x_min + margin
-        draw_y = py_min - all_y_min + margin
-        para_w = px_max - px_min
+    overlay.show()
 
-        translated_text = translated.get(para_idx, _paragraph_text(para_lines))
-
-        # Adaptive font sizing
-        actual_font = use_font_size
-        text_w, text_h = _measure_text(translated_text, actual_font)
-
-        if text_w > para_w * 1.5 and para_w > 50:
-            scale = para_w / text_w
-            actual_font = max(int(use_font_size * scale * 0.9),
-                            int(use_font_size * 0.6))
-            text_w, text_h = _measure_text(translated_text, actual_font)
-
-        # Draw with outline for visibility
-        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            canvas.create_text(draw_x + dx, draw_y + dy,
-                             anchor='nw', text=translated_text,
-                             font=("fixedsys", actual_font),
-                             fill='#888888')
-        canvas.create_text(draw_x, draw_y, anchor='nw',
-                          text=translated_text,
-                          font=("fixedsys", actual_font),
-                          fill=text_color)
-
-    timer.mark(f"Render ({len(paragraphs)} paras)")
-    logger.info(timer.report())
-
-    # Dismiss on Escape / Q
     def dismiss(event=None):
         try:
-            win.destroy()
-        except tk.TclError:
+            overlay.close()
+        except Exception:
             pass
-        root = _get_tk_root()
-        try:
-            root.destroy()
-        except tk.TclError:
-            pass
-        global _tk_root
-        _tk_root = None
+    overlay.installEventFilter(_DismissFilter(overlay))
 
-    root = _get_tk_root()
-    root.bind('<Escape>', dismiss)
-    root.bind('<Key-q>', dismiss)
-    root.deiconify()
-    root.focus_force()
-    root.mainloop()
+
+class _DismissFilter:
+    def __init__(self, widget):
+        self.widget = widget
+
+    def eventFilter(self, obj, event):
+        if event.type() == 17:
+            if event.button() == Qt.LeftButton:
+                self.widget.close()
+        return False
 
 
 if __name__ == "__main__":
-    show_translations(0, 0, "es", 0.8, 12)
+    app = QApplication(sys.argv)
+    w = OverlayWindow(100, 100, 800, 600, alpha=0.9, text_color="#ffffff")
+    w.show()
+    sys.exit(app.exec_())
