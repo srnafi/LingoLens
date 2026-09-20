@@ -25,9 +25,14 @@ if str(_this_dir) not in sys.path:
 from overlay import (
     _wait_for_flask, _run_ocr, _parse_ocr_results,
     _group_words_into_lines, _group_lines_into_paragraphs,
-    _estimate_font_size, _paragraph_text,
+    _estimate_font_size,
 )
 from translator import translate_text
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Reconstruct _paragraph_text — flatten paragraph (list of lines) to text
+def _paragraph_text(para_lines):
+    return ' '.join(w['text'] for line in para_lines for w in line)
 
 logging.basicConfig(level=logging.INFO,
                     format='[%(name)s] %(levelname)s: %(message)s')
