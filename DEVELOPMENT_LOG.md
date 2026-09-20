@@ -1,73 +1,86 @@
-# LingoLens Development & Recovery Log
+# LingoLens Development Log
 
-## Architecture (Pure Python)
-
-- **`app.py`** — PyQt5 Control Center: dark theme, sidebar navigation, settings pages, Flask process manager
-- **`python/capture.py`** — PyQt5 full-screen overlay for screen region selection
-- **`python/detector.py`** — OpenVINO text detection (horizontal-text-detection-0001), singleton lazy-loaded, crops detected words
-- **`python/ocr_server.py`** — Flask REST API with EasyOCR, persistent Reader loaded once at startup
-- **`python/overlay.py`** — Single-window overlay: groups words → lines → paragraphs, translates paragraphs with context, renders all translated text on ONE transparent canvas
-- **`python/translator.py`** — Tiered fallback: googletrans → deep_translator Google → MyMemory
-- **`run.py` / `run.bat`** — Virtual environment launcher
-
-## Pipeline Flow
+## Current Architecture (Pure Python, PyQt5)
 
 ```
-app.py → (subprocess) capture.py → detector.py → overlay.py → ocr_server.py (Flask)
-                screenshot    OpenVINO detect    EasyOCR via Flask
-                              + crop words        + group into lines/paragraphs
-                                                  + translate paragraphs
-                                                  + render on single canvas
+app.py (root)
+  ├── spawns ──→ python/ocr_server.py  (Flask OCR server, EasyOCR persistent Reader)
+  └── spawns ──→ python/capture.py      (PyQt5 screen region selection)
+                    │
+                    └── detector.py     (OpenVINO text detection, crops words)
+                          │
+                          └── overlay.py (PyQt5 single-window overlay)
+                                ├── Flask OCR (EasyOCR via HTTP POST)
+                                ├── Word → Line → Paragraph grouping
+                                ├── Paragraph-level translation (ThreadPoolExecutor, parallel)
+                                ├── OpenCV inpainting (remove source text)
+                                ├── Source-relative coordinate rendering
+                                └── Single transparent overlay window
 ```
 
-## Key Design: Single-Window Overlay
+## Component Overview
 
-The overlay architecture creates ONE transparent window covering the entire
-snipped region. All translated text is drawn on a single canvas at
-image-relative coordinates — no coordinate conversion per text item.
+| File | Responsibility |
+|---|---|
+| `app.py` | PyQt5 Control Center, process management, hotkeys, settings persistence |
+| `python/capture.py` | PyQt5 full-screen region selection overlay, DPI-aware, saves snip to image1.png |
+| `python/detector.py` | OpenVINO text detection (horizontal-text-detection-0001), singleton, crops words to `python/crops/` |
+| `python/ocr_server.py` | Flask REST API on port 5000, EasyOCR Reader loaded once, `/ocr` + `/health` endpoints |
+| `python/overlay.py` | Single PyQt5 overlay window, OpenCV inpainting, line/paragraph grouping, paragraph translation |
+| `python/translator.py` | Tiered fallback: googletrans → deep_translator Google → MyMemory |
+| `run.py` / `run.bat` | Virtualenv launcher (uses `.venv/Scripts/python.exe`) |
+| `python/benchmark.py` | Pipeline timing benchmark, parallel speedup verification |
 
-Pipeline:
-1. User snips a screen region
-2. OpenVINO detects text bounding boxes in the captured image
-3. Each word crop is sent to EasyOCR via Flask
-4. **Words are grouped into lines** (vertical center proximity, 50% threshold)
-5. **Lines are grouped into paragraphs** (gap < 1.2x line height)
-6. **Each paragraph is translated as a complete unit** — giving the translation
-   engine full context for natural, grammatically correct output
-7. **Font size is estimated** from median OCR bounding box height
-8. **Adaptive text fitting** — scales down if translation exceeds source width
-9. **Text outline** for visibility over arbitrary backgrounds
-10. All rendered on ONE canvas inside a single transparent overlay window
+## Key Design Decisions
 
-Coordinate system:
-- Overlay window positioned at snip's top-left + screen offset
-- All text drawn at image-relative coordinates (no per-item conversion)
-- Every OCR result traceable to its original position in the snipped region
+- **Single overlay window**: One `OverlayWindow` (QWidget) covers the entire snipped region. All translated text is drawn on a single canvas at image-relative coordinates.
+- **Flask OCR retained**: EasyOCR Reader is expensive to load; keeping it as a persistent Flask process avoids repeated initialization.
+- **Singleton OpenVINO model**: `_detector_instance` lazy-loaded once, reused across snips.
+- **DPI awareness**: `SetProcessDpiAwareness(2)` called at process start in `capture.py` and `overlay.py` before any Qt/PIL imports.
+- **Source-aware font sizing**: Estimated from median OCR bounding box height × 0.75.
+- **Paragraph-level translation**: Words grouped into lines, lines into paragraphs, each paragraph translated as a complete unit for natural, contextually correct output.
+- **Settings persistence**: `settings.json` (gitignored) stores user preferences.
 
-## Key Architectural Decisions
+## Testing
 
-- **Single overlay window**: one Toplevel for entire snip, not N windows per line
-- **Flask retained** for OCR persistence: EasyOCR Reader loaded once at startup
-- **Singleton OpenVINO model**: lazy-loaded once, reused across snips
-- **Shared Tk root**: text measurement uses one hidden Tk root
-- **Settings persistence**: saved to `settings.json`, restored on launch
-- **Global hotkey**: `Alt+Shift+M` via Windows API
-- **DPI awareness**: SetProcessDpiAwareness(2) called at process start (capture.py) before any Qt/PIL
-- **Source-aware font sizing**: estimated from OCR geometry, adapts to source text scale
+- `python/test_overlay.py` — 11 unit tests for OCR parsing, grouping, font estimation, bbox calculations (all passing).
+- `python/test_pipeline.py` — 16 integration tests for the full pipeline with synthetic OCR data (all passing).
+- `python/benchmark.py` — Timing benchmark verifying parallel translation speedup.
+- `py_compile` passes for all 7 Python files.
 
-## Bug Fixes (session)
+## Bug Fixes (Current Session)
 
-- Fixed `capture.py` globals crash (r,g,b,op,lw used before assignment)
-- Fixed `ocr_server.py` double EasyOCR Reader initialization
-- Fixed missing `text_color` passthrough from UI to overlay
-- Added Flask `/health` endpoint and readiness check
-- Added Escape/Q to dismiss translation overlays
-- Added error handling for missing OpenVINO models
-- Fixed DPI awareness timing — moved to process start
-- Removed stale files: `app_main.py`, `width.py`
+1. **Fixed `as_completed` import**: `from concurrent.futures import ThreadPoolExecutor, as_completed` — missing import caused `NameError` in `show_translations`.
+2. **Fixed `font_size` type coercion**: CLI args arrive as strings; converted to `int`/`float` at entry points in `capture.py` and `overlay.py`.
+3. **Fixed paragraph flattening in `translate_para`**: `for line in para for w in line` instead of `for w in para` (paragraphs are lists of lines, not lists of words).
+4. **Fixed `setPalette` call**: `setPalette(Qt.black)` → `setPalette(QPalette(Qt.black))` (requires QPalette, not GlobalColor).
+5. **Fixed `keyPressEvent` return**: Returns `True` to accept the event.
+6. **Fixed `_reconstruct_background` mask**: Created mask with correct `shape[:2]` dimensions.
+7. **Fixed `_DismissFilter` class**: Inherits `QObject` with `super().__init__()` for `installEventFilter` to work.
+8. **Fixed `update_overlay` regions dict**: Added `width` and `height` keys used by `_reconstruct_background`.
+9. **Fixed model path in `detector.py`**: Changed from relative `"models/..."` to absolute `str(_this_dir / "models" / "...")` — was the root cause of the overlay not appearing (model not found → FileNotFoundError → image deleted → pipeline broken).
+
+## Runtime State
+
+- **Working**: Flask OCR server startup, OpenVINO detection, EasyOCR recognition, paragraph grouping, parallel translation, overlay rendering (verified via unit + integration tests).
+- **Not yet verified at runtime**: Full end-to-end snip → OCR → translate → overlay display on actual desktop (requires interactive GUI testing).
 
 ## Migration History
 
-- Electron → Pure Python (PyQt5) migration completed
-- All Electron artifacts removed
-- Repository cleaned: large model weights excluded from git
+- Electron + Flask (JavaScript/Flask) → Pure Python (PyQt5/Flask) migration completed.
+- All Electron artifacts removed (package.json, main.js, renderer.js, index.html, etc.).
+- Large model weights excluded from git, auto-downloaded at runtime.
+
+## Current Git Log (recent)
+
+```
+84e4ea9  Add integration tests for overlay pipeline
+0d53694  Fix: _DismissFilter must inherit QObject for installEventFilter
+cc43f16  Fix: KeyError in _reconstruct_background - add width/height to regions dict
+fc7be72  Fix: setPalette needs QPalette, not GlobalColor
+be327c1  Fix: pass image_path through pipeline to prevent deletion-before-use
+6f4b043  Add _paragraph_bbox, fix unit tests for grouping algorithm
+b76f5ee  Fix: paragraph text flattening in translate_para, update benchmark imports
+618239f  Fix: add as_completed to concurrent.futures imports
+3c04923  Replace Tk overlay with PyQt5 image compositing architecture
+```
