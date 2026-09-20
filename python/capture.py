@@ -1,11 +1,30 @@
 import sys
 import os
+import ctypes
+
+# Set DPI awareness BEFORE any Qt or PIL imports.
+# On Windows with display scaling, coordinates from Qt widgets,
+# PIL ImageGrab, and Tk windows must all be in the same coordinate space.
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor aware
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 import pyautogui
 from PIL import Image, ImageGrab, ImageFilter
 from PyQt5 import QtWidgets, QtCore, QtGui
 from pathlib import Path
+import logging
+
+logging.basicConfig(level=logging.DEBUG,
+                    format='[%(name)s] %(levelname)s: %(message)s')
+logger = logging.getLogger('capture')
+
 import detector
 
 
@@ -47,6 +66,7 @@ class CaptureWidget(QtWidgets.QWidget):
                 pass
 
         screen_width, screen_height = pyautogui.size()
+        logger.info(f"Screen size (pyautogui): {screen_width}x{screen_height}")
         self.setGeometry(0, 0, screen_width, screen_height)
         self.begin = QtCore.QPoint()
         self.end = QtCore.QPoint()
@@ -118,6 +138,9 @@ class CaptureWidget(QtWidgets.QWidget):
         QtWidgets.QApplication.processEvents()
         img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
 
+        logger.info(f"Snip region: ({x1},{y1}) -> ({x2},{y2}), "
+                     f"image size: {img.width}x{img.height}")
+
         # Save the full-quality screenshot for OCR
         save_path = Path(__file__).parent / "image1.png"
         img.save(str(save_path), format="png")
@@ -126,6 +149,7 @@ class CaptureWidget(QtWidgets.QWidget):
 
         # Hand off to detector -> OCR -> overlay pipeline
         detector.main(
+            image_path=str(save_path),
             x1=x1, y1=y1, destination=self.destination,
             alpha=self.alpha, font_size=self.font_size,
             text_color=self.text_color,
@@ -142,6 +166,9 @@ if __name__ == '__main__':
     alpha = sys.argv[5] if len(sys.argv) > 5 else "0.7"
     font_size = sys.argv[6] if len(sys.argv) > 6 else "12"
     text_color = sys.argv[7] if len(sys.argv) > 7 else "#000000"
+
+    logger.info(f"capture.py starting: dest={destination}, "
+                f"alpha={alpha}, font_size={font_size}, text_color={text_color}")
 
     widget = CaptureWidget(
         destination=destination, fill_color=fill_color_hex,
