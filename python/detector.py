@@ -26,8 +26,8 @@ def get_detector():
 class TextDetector:
     def __init__(self):
         ie = Core()
-        model_path = "models/horizontal-text-detection-0001.xml"
-        weights_path = "models/horizontal-text-detection-0001.bin"
+        model_path = str(_this_dir / "models" / "horizontal-text-detection-0001.xml")
+        weights_path = str(_this_dir / "models" / "horizontal-text-detection-0001.bin")
         if not os.path.exists(model_path) or not os.path.exists(weights_path):
             raise FileNotFoundError(
                 f"OpenVINO text detection model not found.\n"
