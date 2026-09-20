@@ -3,6 +3,8 @@ import os
 import ctypes
 import logging
 import requests
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # Set DPI awareness BEFORE any Qt imports
