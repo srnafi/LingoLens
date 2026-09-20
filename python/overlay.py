@@ -30,7 +30,7 @@ def _get_tk_root():
 
 
 # ---------------------------------------------------------------------------
-# Grouping: OCR words -> lines -> paragraphs
+# Grouping: OCR words -> lines
 # ---------------------------------------------------------------------------
 
 def _parse_ocr_results(ocr_results):
@@ -53,7 +53,7 @@ def group_into_lines(regions):
     """Group word regions into lines by vertical overlap/proximity.
 
     Two words belong to the same line if their vertical centers are within
-    60% of the average word height.
+    60% of the average word height. Words in each line are sorted left-to-right.
     """
     if not regions:
         return []
@@ -73,61 +73,24 @@ def group_into_lines(regions):
         else:
             lines.append([region])
 
-    # Sort words left-to-right within each line
     for line in lines:
         line.sort(key=lambda r: r['x_min'])
 
     return lines
 
 
-def group_into_paragraphs(lines):
-    """Group lines into paragraphs by vertical gap.
-
-    Lines with a gap smaller than 1.5x their combined height are in the
-    same paragraph.
-    """
-    if not lines:
-        return []
-
-    paragraphs = [[lines[0]]]
-
-    for i in range(1, len(lines)):
-        prev = lines[i - 1]
-        curr = lines[i]
-
-        prev_y_max = max(r['y_max'] for r in prev)
-        curr_y_min = min(r['y_min'] for r in curr)
-
-        prev_h = max(r['y_max'] for r in prev) - min(r['y_min'] for r in prev)
-        curr_h = max(r['y_max'] for r in curr) - min(r['y_min'] for r in curr)
-        avg_h = (prev_h + curr_h) / 2
-
-        gap = curr_y_min - prev_y_max
-        if gap < avg_h * 1.5:
-            paragraphs[-1].append(curr)
-        else:
-            paragraphs.append([curr])
-
-    return paragraphs
-
-
-def _paragraph_bbox(para_lines):
-    """Get the bounding box covering all lines in a paragraph."""
-    x_min = min(r['x_min'] for line in para_lines for r in line)
-    y_min = min(r['y_min'] for line in para_lines for r in line)
-    x_max = max(r['x_max'] for line in para_lines for r in line)
-    y_max = max(r['y_max'] for line in para_lines for r in line)
+def _line_bbox(line):
+    """Get bounding box covering all words in a line."""
+    x_min = min(r['x_min'] for r in line)
+    y_min = min(r['y_min'] for r in line)
+    x_max = max(r['x_max'] for r in line)
+    y_max = max(r['y_max'] for r in line)
     return x_min, y_min, x_max, y_max
 
 
 def _line_text(line):
     """Join words in a line into a single string."""
     return ' '.join(r['text'] for r in line)
-
-
-def _paragraph_text(para_lines):
-    """Join all lines in a paragraph."""
-    return '\n'.join(_line_text(line) for line in para_lines)
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +129,6 @@ def _run_ocr(folder_location):
 # ---------------------------------------------------------------------------
 
 def _measure_text(text, font_size):
-    """Measure text dimensions using a shared hidden Tk root."""
     root = _get_tk_root()
     label = tk.Label(root, text=text, font=("fixedsys", font_size))
     label.pack()
@@ -177,67 +139,38 @@ def _measure_text(text, font_size):
     return w, h
 
 
-def _wrap_text(text, max_width, font_size):
-    """Word-wrap text to fit within max_width pixels.
+# ---------------------------------------------------------------------------
+# Overlay display - LINE-LEVEL with spatial alignment
+# ---------------------------------------------------------------------------
 
-    Returns a list of lines (strings), each fitting within max_width.
+def _create_line_overlay(text, x, y, source_width, source_height,
+                         font_size, alpha, text_color):
+    """Create a transparent overlay for one translated line.
+
+    Positioned at (x, y) which is the source line's top-left + screen offset.
+    The overlay spans the source region's width and height.
     """
-    root = _get_tk_root()
-    words = text.replace('\n', ' ').split()
-    lines = []
-    current = ""
+    tw, th = _measure_text(text, font_size)
 
-    for word in words:
-        test = f"{current} {word}".strip()
-        tw, _ = _measure_text(test, font_size)
-        if tw <= max_width or not current:
-            current = test
-        else:
-            lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    return lines
-
-
-# ---------------------------------------------------------------------------
-# Overlay display
-# ---------------------------------------------------------------------------
-
-def _create_overlay(text, x, y, max_width, font_size, alpha, text_color):
-    """Create a single transparent overlay window displaying text."""
-    wrapped = _wrap_text(text, max_width, font_size)
-
-    # Calculate total size
-    total_w = 0
-    total_h = 0
-    for line in wrapped:
-        lw, lh = _measure_text(line, font_size)
-        total_w = max(total_w, lw)
-        total_h += lh
-
-    # Add padding
-    total_w += 8
-    total_h += 4
+    # Use source region dimensions as the overlay size
+    win_w = max(source_width, tw + 8)
+    win_h = max(source_height, th + 4)
 
     win = tk.Toplevel()
-    win.geometry(f'{total_w}x{total_h}+{x}+{y}')
+    win.geometry(f'{win_w}x{win_h}+{x}+{y}')
     win.overrideredirect(True)
     win.attributes('-alpha', alpha)
     win.attributes('-topmost', True)
     win.wm_attributes('-transparentcolor', 'white')
 
-    canvas = tk.Canvas(win, width=total_w, height=total_h,
+    canvas = tk.Canvas(win, width=win_w, height=win_h,
                        highlightthickness=0, bg='white')
     canvas.pack()
 
-    # Draw each wrapped line
-    y_offset = 0
-    for line in wrapped:
-        lw, lh = _measure_text(line, font_size)
-        canvas.create_text(4, y_offset, anchor='nw', text=line,
-                           font=("fixedsys", font_size), fill=text_color)
-        y_offset += lh
+    # Vertically center the text within the source region height
+    y_offset = max(0, (win_h - th) // 2)
+    canvas.create_text(4, y_offset, anchor='nw', text=text,
+                       font=("fixedsys", font_size), fill=text_color)
 
     return win
 
@@ -248,11 +181,11 @@ def _create_overlay(text, x, y, max_width, font_size, alpha, text_color):
 
 def show_translations(screen_x, screen_y, dest, alpha, font_size,
                       text_color="#000000"):
-    """Run full pipeline: OCR -> group -> translate -> display overlays.
+    """OCR -> group words into lines -> translate each line -> overlay.
 
-    Instead of translating each word individually, this groups OCR results
-    into lines, then paragraphs, and translates each paragraph as a complete
-    unit. This gives the translation engine full context for natural output.
+    Each translated line is placed at the source line's exact position,
+    preserving spatial alignment. Translation uses line-level context
+    (full sentence/phrase) rather than individual words.
     """
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -264,12 +197,10 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
 
     crops_folder = _this_dir / "crops"
 
-    # 1. Wait for Flask OCR server
     if not _wait_for_flask():
         logger.error("Flask OCR server not ready")
         return
 
-    # 2. Run OCR
     ocr_results = _run_ocr(str(crops_folder))
     if not ocr_results:
         logger.warning("No OCR results")
@@ -277,54 +208,48 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
 
     logger.info(f"OCR: {len(ocr_results)} word regions")
 
-    # 3. Parse and group into lines -> paragraphs
+    # Parse and group into lines
     regions = _parse_ocr_results(ocr_results)
     lines = group_into_lines(regions)
-    paragraphs = group_into_paragraphs(lines)
 
-    logger.info(f"Grouped into {len(lines)} lines, {len(paragraphs)} paragraphs")
+    logger.info(f"Grouped into {len(lines)} lines")
 
-    # 4. Translate each paragraph as a whole (parallel)
+    # Translate each line as a unit (parallel)
     translated = {}
 
-    def translate_para(idx, para_lines):
-        text = _paragraph_text(para_lines)
+    def translate_line(idx, line):
+        text = _line_text(line)
         return idx, translate_text(text, dest)
 
-    with ThreadPoolExecutor(max_workers=min(8, len(paragraphs) + 1)) as pool:
-        futures = [pool.submit(translate_para, i, para)
-                   for i, para in enumerate(paragraphs)]
+    with ThreadPoolExecutor(max_workers=min(8, len(lines) + 1)) as pool:
+        futures = [pool.submit(translate_line, i, line)
+                   for i, line in enumerate(lines)]
         for f in as_completed(futures):
             idx, text = f.result()
             translated[idx] = text
 
-    # 5. Display overlays — one per paragraph
-    # Use a single max width based on the widest paragraph's original bbox
-    max_overlay_width = max(
-        (_paragraph_bbox(para)[2] - _paragraph_bbox(para)[0])
-        for para in paragraphs
-    ) if paragraphs else 400
-
+    # Display overlays - one per line, positioned at source coordinates
     overlay_windows = []
-    for i, para_lines in enumerate(paragraphs):
-        bbox = _paragraph_bbox(para_lines)
-        orig_w = bbox[2] - bbox[0]
+    for i, line in enumerate(lines):
+        bbox = _line_bbox(line)
+        x_min, y_min, x_max, y_max = bbox
 
-        # Position at paragraph's top-left + screen offset
-        ox = bbox[0] + screen_x
-        oy = bbox[1] + screen_y
+        # Position at source line's top-left + screen offset
+        ox = x_min + screen_x
+        oy = y_min + screen_y
 
-        # Use original paragraph width as the wrap constraint
-        wrap_width = max(orig_w, 150)
+        # Source region dimensions
+        src_w = x_max - x_min
+        src_h = y_max - y_min
 
-        text = translated.get(i, _paragraph_text(para_lines))
-        win = _create_overlay(text, ox, oy, wrap_width, font_size,
-                              alpha, text_color)
+        text = translated.get(i, _line_text(line))
+        win = _create_line_overlay(text, ox, oy, src_w, src_h,
+                                   font_size, alpha, text_color)
         overlay_windows.append(win)
 
-    logger.info(f"Displayed {len(overlay_windows)} translation overlays")
+    logger.info(f"Displayed {len(overlay_windows)} line overlays")
 
-    # 6. Dismiss on Escape / Q
+    # Dismiss on Escape / Q
     def dismiss_all(event=None):
         for w in overlay_windows:
             try:
