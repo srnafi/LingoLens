@@ -343,7 +343,7 @@ class OverlayWindow(QWidget):
 # ---------------------------------------------------------------------------
 
 def show_translations(screen_x, screen_y, dest, alpha, font_size,
-                      text_color="#000000"):
+                      text_color="#000000", image_path=None):
     """Full pipeline: capture → OCR → group → translate → composite overlay.
 
     Creates ONE transparent overlay window exactly matching the snipped region.
@@ -410,7 +410,7 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
     # Determine snip image for background reconstruction
     import numpy as np
     from PIL import Image
-    capture_path = str(_this_dir / "image1.png")
+    capture_path = image_path or str(_this_dir / "image1.png")
     if not os.path.exists(capture_path):
         logger.error("No captured image (image1.png not found). Run a snip first.")
         return

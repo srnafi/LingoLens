@@ -138,22 +138,34 @@ def main(image_path="image1.png", x1=0, y1=0, destination='hi',
     try:
         detector = get_detector()
         coords = detector.detect(image_path)
-        try:
-            os.remove(image_path)
-        except OSError:
-            pass
 
         if not coords:
             logger.warning("No text regions detected")
+            try:
+                os.remove(image_path)
+            except OSError:
+                pass
             return
 
         logger.info(f"{len(coords)} regions detected, running OCR + translation")
         overlay.show_translations(
             screen_x=x1, screen_y=y1, dest=destination,
             alpha=alpha, font_size=font_size, text_color=text_color,
+            image_path=image_path,
         )
+
+        # Clean up after overlay is done
+        try:
+            os.remove(image_path)
+        except OSError:
+            pass
     except Exception as e:
         logger.error(f"Pipeline failed: {e}", exc_info=True)
+        # Ensure cleanup even on failure
+        try:
+            os.remove(image_path)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
