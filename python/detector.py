@@ -70,6 +70,9 @@ class TextDetector:
         os.makedirs(crops_folder, exist_ok=True)
         _clear_folder(crops_folder)
 
+        img_h, img_w = img.shape[:2]
+        logger.info(f"Image size: {img_w}x{img_h}")
+
         _, _, h, w = self.input_layer.shape
         resized = cv2.resize(img, (w, h))
         inp = np.expand_dims(resized.transpose(2, 0, 1), 0)
@@ -84,6 +87,7 @@ class TextDetector:
         ry, rx = img.shape[:2]
         rry, rrx = resized.shape[:2]
         sx, sy = rx / rrx, ry / rry
+        logger.info(f"Scale factors: sx={sx:.4f}, sy={sy:.4f}")
 
         boxes, confs = [], []
         for p in preds:
@@ -111,6 +115,9 @@ class TextDetector:
             })
 
         logger.info(f"Detected {len(coordinates)} text regions")
+        for c in coordinates:
+            logger.debug(f"  crop: ({c['x_min']},{c['y_min']})->"
+                         f"({c['x_max']},{c['y_max']})")
         return coordinates
 
 

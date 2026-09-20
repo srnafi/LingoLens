@@ -187,6 +187,9 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
     preserving spatial alignment. Translation uses line-level context
     (full sentence/phrase) rather than individual words.
     """
+    logger.info(f"show_translations: screen_x={screen_x}, screen_y={screen_y}, "
+                f"dest={dest}, alpha={alpha}, font_size={font_size}")
+
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
@@ -243,6 +246,9 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
         src_h = y_max - y_min
 
         text = translated.get(i, _line_text(line))
+        logger.info(f"  line {i}: bbox=({x_min},{y_min})->({x_max},{y_max}), "
+                     f"overlay at ({ox},{oy}), size {src_w}x{src_h}, "
+                     f"text='{text[:60]}...'")
         win = _create_line_overlay(text, ox, oy, src_w, src_h,
                                    font_size, alpha, text_color)
         overlay_windows.append(win)
