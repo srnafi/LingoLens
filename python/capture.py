@@ -161,10 +161,10 @@ if __name__ == '__main__':
 
     destination = sys.argv[1] if len(sys.argv) > 1 else "en"
     fill_color_hex = sys.argv[2] if len(sys.argv) > 2 else "#ff0000"
-    opacity = sys.argv[3] if len(sys.argv) > 3 else "0.3"
-    line_width = sys.argv[4] if len(sys.argv) > 4 else "3"
-    alpha = sys.argv[5] if len(sys.argv) > 5 else "0.7"
-    font_size = sys.argv[6] if len(sys.argv) > 6 else "12"
+    opacity = float(sys.argv[3]) if len(sys.argv) > 3 else 0.3
+    line_width = float(sys.argv[4]) if len(sys.argv) > 4 else 3
+    alpha = float(sys.argv[5]) if len(sys.argv) > 5 else 0.7
+    font_size = int(sys.argv[6]) if len(sys.argv) > 6 else 12
     text_color = sys.argv[7] if len(sys.argv) > 7 else "#000000"
 
     logger.info(f"capture.py starting: dest={destination}, "
