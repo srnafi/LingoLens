@@ -4,7 +4,7 @@
 
 | Phase | Goal | Status | Gate |
 |-------|------|--------|------|
-| P0 Baseline | branch, py_compile, existing tests, failing repros, debug dump, replay tool | IN PROGRESS | repro tests fail on old code for stated reasons |
+| P0 Baseline | branch, py_compile, existing tests, failing repros, debug dump, replay tool | DONE | repro tests fail on old code for stated reasons |
 | P1 Lifecycle & geometry | defects 1, 2, 6 | PENDING | lifecycle + geometry tests pass; human outline check |
 | P2 Detection & grouping | defects 5, 7 + inverted test data | PENDING | 32 -> 8 -> 4 |
 | P3 Blend renderer | defects 3, 4 | PENDING | numeric checks pass on fixtures + real dumps |
