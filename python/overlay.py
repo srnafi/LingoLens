@@ -278,6 +278,8 @@ class OverlayWindow(QWidget):
             regions.append({
                 'x_min': w['x_min'], 'y_min': w['y_min'],
                 'x_max': w['x_max'], 'y_max': w['y_max'],
+                'width': w['x_max'] - w['x_min'],
+                'height': w['y_max'] - w['y_min'],
             })
 
         img_recon = _reconstruct_background(img_bgr, regions)
