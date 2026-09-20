@@ -4,6 +4,7 @@ import ctypes
 import logging
 import requests
 import time
+import cv2
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -219,7 +220,7 @@ class OverlayWindow(QWidget):
         self._pixmap = QPixmap(self.snip_width, self.snip_height)
         self._pixmap.fill(Qt.transparent)
 
-        self.setPalette(Qt.black)
+        self.setPalette(QPalette(Qt.black))
         self.setAutoFillBackground(False)
 
         self._init_timer = QTimer()
