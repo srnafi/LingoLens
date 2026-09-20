@@ -20,7 +20,7 @@ except Exception:
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLabel,
         QSizePolicy, QFrame)
 from PyQt5.QtCore import (Qt, QPoint, QRect, QSize, QTimer, pyqtSignal,
-        pyqtSlot)
+        pyqtSlot, QObject)
 from PyQt5.QtGui import (QPixmap, QPainter, QColor, QFont, QPen,
         QBrush, QImage, QPalette)
 
@@ -457,8 +457,9 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
     overlay.installEventFilter(_DismissFilter(overlay))
 
 
-class _DismissFilter:
+class _DismissFilter(QObject):
     def __init__(self, widget):
+        super().__init__()
         self.widget = widget
 
     def eventFilter(self, obj, event):
