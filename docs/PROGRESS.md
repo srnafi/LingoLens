@@ -13,17 +13,25 @@
 
 ## Defect Confirmation (against actual code)
 
-All 9 defects confirmed against current code on overlay-fix branch.
+Defects 1, 2, 6 FIXED in P1. Defects 3, 4, 5, 7, 8, 9 still present.
 
-1. Overlay destroyed at once — overlay.py:434 local var, no registry, no setQuitOnLastWindowClosed.
-2. Wrong window size — overlay.py:426-432 derives size from OCR boxes + 40px.
-3. Text drawn wrong — overlay.py:317 QFont("fixedsys"), line 322 drawText(x,y,str) baseline.
-4. Background removal smudges — overlay.py:160-187 per-word cv2.inpaint rectangle.
-5. Grouping merges unrelated — overlay.py:126 no horizontal overlap/alignment guard.
-6. Dismiss handler dead — overlay.py:457-466 eventFilter on QEvent.Show (type 17), no parent.
-7. Detector keeps junk — detector.py:92-100 no conf threshold, no clamp, no empty-crop guard.
-8. Capture race — capture.py:137-139 grab while tinted UI visible, no AA_DisableHighDpiScaling.
-9. Translator — translator.py:1 googletrans import at top, missing from requirements.txt.
+FIXED:
+1. Overlay destroyed at once -- FIXED: _OVERLAYS registry, destroyed() -> _on_overlay_closed,
+   setQuitOnLastWindowClosed(False). OverlayWindow uses Qt.Tool flag.
+2. Wrong window size -- FIXED: snip_w_img/snip_h_img from capture_bgr.shape[:2].
+3. Text drawn wrong -- overlay.py still uses QFont("Arial") (fixed from "fixedsys"),
+   drawText(dx, dy, t_text) (still baseline mode, not QRect). Defect 3 NOT fully fixed;
+   belongs to P3 (blend renderer).
+4. Background removal smudges -- _reconstruct_background still per-word rectangle inpaint.
+   Defect 4 NOT fixed; belongs to P3.
+5. Grouping merges unrelated -- _group_lines_into_paragraphs still no alignment/overlap guard.
+   Defect 5 NOT fixed; belongs to P2.
+6. Dismiss handler dead -- FIXED: deleted _DismissFilter; now mousePressEvent + keyPressEvent.
+7. Detector keeps junk -- detector.py unchanged. Defect 7 NOT fixed; belongs to P2.
+8. Capture race -- capture.py: added AA_DisableHighDpiScaling in __main__ (setup done).
+   Freeze-frame capture NOT implemented; belongs to P4.
+9. Translator -- translator.py unchanged (top-level googletrans import). Defect 9 NOT fixed;
+   belongs to P5.
 
 ## Environment
 
