@@ -385,7 +385,9 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
 
     # Translate each paragraph (parallel)
     def translate_para(idx, para):
-        text = ' '.join(w['text'] for w in para)
+        # para is a list of lines, each line is a list of word dicts
+        # Flatten into a single text string
+        text = ' '.join(w['text'] for line in para for w in line)
         return idx, translate_text(text, dest)
 
     translated = {}
