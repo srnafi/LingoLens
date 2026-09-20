@@ -29,7 +29,10 @@ if str(_this_dir) not in sys.path:
 
 from translator import translate_text
 
-logger = logging.getLogger('overlay_qt')
+logger = logging.getLogger('lingolens')
+
+# Debug dump support (writes artifacts when LINGOLENS_DEBUG=1)
+import debug_dump
 
 # ---------------------------------------------------------------------------
 # Module-level registry of live overlays (defect 1 fix).
@@ -356,6 +359,99 @@ class OverlayWindow(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Debug artifact writer (called when LINGOLENS_DEBUG=1)
+# ---------------------------------------------------------------------------
+
+def _write_debug_artifacts(dbg, overlay, capture_bgr, words, paragraphs,
+                           translated, screen_x, screen_y, snip_w, snip_h):
+    """Write all debug artifacts to the dump directory."""
+    import numpy as np
+    import cv2
+
+    # capture.png
+    dbg.write_capture(capture_bgr)
+
+    # boxes.png -- detections drawn on capture
+    dbg.write_boxes_png(capture_bgr,
+                        [[w['x_min'], w['y_min'], w['x_max'], w['y_max']] for w in words])
+
+    # blocks.json + blocks.png
+    blocks = []
+    for i, para in enumerate(paragraphs):
+        all_w = [w for line in para for w in line]
+        if not all_w:
+            continue
+        text = ' '.join(w['text'] for w in all_w)
+        x1 = min(w['x_min'] for w in all_w)
+        y1 = min(w['y_min'] for w in all_w)
+        x2 = max(w['x_max'] for w in all_w)
+        y2 = max(w['y_max'] for w in all_w)
+        blocks.append({
+            "index": i,
+            "text": text,
+            "bbox": [x1, y1, x2, y2],
+            "n_lines": len(para),
+            "n_words": len(all_w),
+        })
+    dbg.write_blocks(paragraphs, words)
+    dbg.write_blocks_png(capture_bgr, paragraphs, words)
+
+    # removed.png -- capture with text removed
+    regions = [{'x_min': w['x_min'], 'y_min': w['y_min'],
+                'x_max': w['x_max'], 'y_max': w['y_max'],
+                'width': w['width'], 'height': w['height']} for w in words]
+    removed = _reconstruct_background(capture_bgr, regions)
+    dbg.write_removed(removed)
+
+    # overlay_rgba.png -- extract from the QPixmap
+    pixmap = overlay._pixmap
+    rgba_img = _pixmap_to_rgba(pixmap)
+    dbg.write_overlay(rgba_img)
+
+    # composite.png
+    dbg.write_composite(capture_bgr, rgba_img)
+
+    # metrics.json
+    metrics = {
+        "counts": {
+            "words": len(words),
+            "lines": len([w for para in paragraphs for w in para]),
+            "blocks": len(paragraphs),
+        },
+        "blocks": blocks,
+        "pixels_changed_outside_patches": 0,  # placeholder; real check in P3
+        "window_geometry": {"x": screen_x, "y": screen_y,
+                            "width": snip_w, "height": snip_h},
+    }
+    dbg.write_metrics(metrics)
+
+    # env.json
+    try:
+        from PyQt5.QtWidgets import QApplication
+        dpr = QApplication.primaryScreen().devicePixelRatio()
+        import pyautogui
+        screen_size = pyautogui.size()
+    except Exception:
+        dpr = None
+        screen_size = None
+    dbg.write_env(screen_size=screen_size, device_pixel_ratio=dpr)
+
+
+def _pixmap_to_rgba(pixmap):
+    """Convert a QPixmap to an HxWx4 uint8 RGBA numpy array."""
+    import numpy as np
+    qimg = pixmap.toImage()
+    # Convert to ARGB32
+    qimg = qimg.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    h, w = qimg.height(), qimg.width()
+    ptr = qimg.bits()
+    ptr.setsize(h * w * 4)
+    arr = np.array(ptr).reshape(h, w, 4)
+    # Qt stores as BGRA, convert to RGBA
+    return arr[:, :, [2, 1, 0, 3]].copy()
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -374,6 +470,10 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
 
     logger.info(f"show_translations: screen=({screen_x},{screen_y}), "
                 f"dest={dest}, alpha={alpha}, font_size={font_size}")
+
+    dbg = debug_dump.DebugDump() if debug_dump.is_debug() else None
+    if dbg:
+        dbg.stage("wait_for_flask")
 
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -410,7 +510,8 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
     paragraphs = _group_lines_into_paragraphs(lines)
     est_font = _estimate_font_size(words)
 
-    logger.info(f"Grouped: {len(words)} words → {len(lines)} lines → {len(paragraphs)} paragraphs")
+    logger.info(f"Grouped: {len(words)} words -> {len(lines)} lines -> "
+                f"{len(paragraphs)} paragraphs")
 
     # Translate each paragraph (parallel)
     def translate_para(idx, para):
@@ -427,6 +528,10 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
         for f in as_completed(futures):
             idx, text = f.result()
             translated[idx] = text
+
+    if dbg:
+        dbg.stage("translate")
+        dbg.write_translations(translated)
 
     # Load captured image -- use actual image dimensions for window geometry
     # (NOT OCR box extents + 40). (defect 2 fix)
@@ -475,6 +580,12 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
     overlay.show()
     overlay.raise_()
     overlay.activateWindow()
+
+    if dbg:
+        dbg.stage("render")
+        _write_debug_artifacts(dbg, overlay, capture_bgr, words, paragraphs,
+                               translated, screen_x, screen_y, snip_w_img, snip_h_img)
+        dbg.finish()
 
 
 # ---------------------------------------------------------------------------
