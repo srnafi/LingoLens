@@ -50,6 +50,8 @@ Desktop.ini
 # Logs and Debug Output
 *.log
 eocr_server.log
+debug/
+logs/
 
 # Generated OCR Results and Crops
 python/crops/
