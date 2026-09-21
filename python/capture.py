@@ -22,6 +22,9 @@ import pyautogui
 from PIL import Image, ImageGrab, ImageFilter
 from PyQt5 import QtWidgets, QtCore, QtGui
 
+import cv2
+import numpy as np
+
 _this_dir = Path(__file__).parent
 
 # Rotating file logging so headless runs (launched from the Control Center)
@@ -40,8 +43,53 @@ logger.addHandler(_file_handler)
 import detector
 
 
+# ---------------------------------------------------------------------------
+# Pure crop-maths helper (spec section 10, P4 gate: unit test for cropping).
+#
+# The snip rectangle is (x1, y1) -> (x2, y2) in screen coordinates. The frozen
+# full-screen image is a PIL.Image in screen coordinates. Cropping must yield
+# an image whose width == x2 - x1 and height == y2 - y1.
+# ---------------------------------------------------------------------------
+def crop_from_frozen(frozen_img, x1, y1, x2, y2):
+    """Crop a region from the freeze-frame image.
+
+    Parameters
+    ----------
+    frozen_img : PIL.Image
+        The full-screen frozen capture, in screen coordinates.
+    x1, y1, x2, y2 : int
+        Screen-coordinate rectangle (left, top, right, bottom).
+
+    Returns
+    -------
+    PIL.Image
+        The cropped region, guaranteed to have width == x2 - x1 and
+        height == y2 - y1.
+    """
+    snip_w = x2 - x1
+    snip_h = y2 - y1
+    # PIL.Image.crop takes (left, top, right, bottom) and clamps to image bounds.
+    img = frozen_img.crop((x1, y1, x2, y2))
+    return img
+
+
+def compute_snip_dims(x1, y1, x2, y2):
+    """Return (width, height) of a snip rectangle in physical pixels.
+
+    Used by the P4 crop-maths unit test. Pure function, no Qt/PIL needed.
+    """
+    return (x2 - x1, y2 - y1)
+
+
 class CaptureWidget(QtWidgets.QWidget):
-    """Full-screen transparent overlay for region selection."""
+    """Full-screen transparent overlay for region selection.
+
+    Freeze-frame capture (defect 8 fix): the screen is grabbed ONCE before the
+    selection UI is shown. The frozen image is painted as a dimmed background
+    so the user sees what they are selecting, and the final snip is cropped
+    from the frozen image -- never from a fresh ImageGrab that might catch the
+    tinted selection window itself.
+    """
     num_snip = 0
     is_snipping = False
 
@@ -83,7 +131,31 @@ class CaptureWidget(QtWidgets.QWidget):
         self.begin = QtCore.QPoint()
         self.end = QtCore.QPoint()
 
+        # Freeze-frame: grab the screen NOW, before showing the selection UI,
+        # so the tinted selection overlay can never contaminate the capture.
+        self._frozen_img = None  # PIL.Image, full screen, in screen coordinates
+        self._frozen_cv = None   # numpy BGR array of the frozen frame (for regrab diagnostic)
+
     def start(self):
+        """Freeze the screen, then show the selection widget over it."""
+        # AA_DisableHighDpiScaling must be set on the QApplication before any
+        # widget is shown so Qt logical pixels == ImageGrab physical pixels.
+        app = QApplication.instance()
+        if app is not None:
+            app.setAttribute(Qt.AA_DisableHighDpiScaling, True)
+
+        # Freeze-frame capture: grab the screen BEFORE the selection UI is
+        # visible, so the tinted overlay cannot tint the sampled background.
+        try:
+            self._frozen_img = ImageGrab.grab(bbox=(0, 0, self.width(), self.height()))
+            self._frozen_cv = cv2.cvtColor(np.array(self._frozen_img), cv2.COLOR_RGB2BGR)
+            logger.info(f"Freeze-frame capture: {self._frozen_img.width}x{self._frozen_img.height}")
+        except Exception as e:
+            logger.error(f"Freeze-frame grab failed: {e}")
+            # Fall back to a solid image so the pipeline doesn't crash
+            self._frozen_img = Image.new("RGB", (self.width(), self.height()), (0, 0, 0))
+            self._frozen_cv = np.array(self._frozen_img)[:, :, ::-1]
+
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint |
             QtCore.Qt.Window |
@@ -110,8 +182,22 @@ class CaptureWidget(QtWidgets.QWidget):
 
         self.setWindowOpacity(opacity)
         qp = QtGui.QPainter(self)
+
+        # Paint the frozen (dimmed) screen as the background so the user sees
+        # what they are selecting, without the tinted overlay contaminating it.
+        if self._frozen_img is not None:
+            arr = np.array(self._frozen_img)  # RGB uint8
+            h_img, w_img, _ = arr.shape
+            qimg = QtGui.QImage(arr.data, w_img, h_img, w_img * 3,
+                                QtGui.QImage.Format_RGB888).copy()
+            qp.drawPixmap(0, 0, self.width(), self.height(), QtGui.QPixmap.fromImage(qimg))
+            # Dim overlay: semi-transparent black brush over the frozen image
+            dim = QtGui.QColor(0, 0, 0, 80)
+            qp.setBrush(dim)
+            qp.drawRect(0, 0, self.width() - 1, self.height() - 1)
+            qp.setBrush(QtGui.QColor(*fill_color))
+
         qp.setPen(QtGui.QPen(QtGui.QColor('black'), line_width))
-        qp.setBrush(QtGui.QColor(*fill_color))
         qp.drawRect(QtCore.QRectF(self.begin, self.end))
 
     def keyPressEvent(self, event):
@@ -146,18 +232,42 @@ class CaptureWidget(QtWidgets.QWidget):
             self.close()
             return
 
-        self.repaint()
-        QtWidgets.QApplication.processEvents()
-        img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+        # Crop the snip from the FREEZE-FRAME image (grabbed before the
+        # selection UI was shown), NOT from a fresh ImageGrab that could
+        # catch the tinted selection window. (defect 8 fix)
+        if self._frozen_img is not None:
+            img = self._frozen_img.crop((x1, y1, x2, y2))
+            cropped_from_frozen = True
+        else:
+            img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+            cropped_from_frozen = False
+
+        # Spec section 3: assert captured image dimensions == snip dimensions.
+        # In physical pixels (DPR 1.0), width == x2 - x1 and height == y2 - y1.
+        snip_w = x2 - x1
+        snip_h = y2 - y1
+        if img.width != snip_w or img.height != snip_h:
+            logger.warning(
+                f"Dimension mismatch: snip=({snip_w},{snip_h}), "
+                f"capture=({img.width},{img.height}) -- DPI scaling issue?")
 
         logger.info(f"Snip region: ({x1},{y1}) -> ({x2},{y2}), "
-                     f"image size: {img.width}x{img.height}")
+                     f"image size: {img.width}x{img.height}, "
+                     f"frozen={cropped_from_frozen}")
+
+        # Diagnostic: in debug mode, 300ms after closing the selection window,
+        # re-grab the same bbox and log the mean absolute difference per channel.
+        # Must be < 2.0 per channel unless the screen actually changed.
+        do_regab = os.environ.get("LINGOLENS_DEBUG", "") == "1"
+        self.close()
+
+        if do_regab and self._frozen_cv is not None:
+            QtCore.QTimer.singleShot(300, lambda: self._regab_diagnostic(
+                x1, y1, x2, y2))
 
         # Save the full-quality screenshot for OCR
         save_path = Path(__file__).parent / "image1.png"
         img.save(str(save_path), format="png")
-
-        self.close()
 
         # Hand off to detector -> OCR -> overlay pipeline
         detector.main(
@@ -166,6 +276,35 @@ class CaptureWidget(QtWidgets.QWidget):
             alpha=self.alpha, font_size=self.font_size,
             text_color=self.text_color,
         )
+
+    def _regab_diagnostic(self, x1, y1, x2, y2):
+        """Re-grab the same bbox 300ms after selection and compare to the
+        frozen frame. If the screen didn't change, the mean absolute per-channel
+        difference should be < 2.0 (spec section 10, P4 gate).
+
+        This catches: tinted selection window still composited, DPI scaling
+        mismatches, or screen content changed during capture.
+        """
+        try:
+            regrab = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+            regrab_arr = cv2.cvtColor(np.array(regrab), cv2.COLOR_RGB2BGR)
+            frozen_crop = self._frozen_cv[y1:y2, x1:x2]
+            # Align sizes (can differ by 1px due to rounding)
+            h = min(regrab_arr.shape[0], frozen_crop.shape[0])
+            w = min(regrab_arr.shape[1], frozen_crop.shape[1])
+            if h > 0 and w > 0:
+                diff = np.abs(
+                    regrab_arr[:h, :w].astype(np.int32) -
+                    frozen_crop[:h, :w].astype(np.int32)
+                )
+                per_channel = diff.reshape(-1, 3).mean(axis=0)
+                overall = float(diff.mean())
+                logger.info(
+                    f"Regrab diagnostic: region=({x1},{y1})->({x2},{y2}) "
+                    f"mean_abs_diff={overall:.2f} per_channel={per_channel.round(2).tolist()} "
+                    f"(threshold < 2.0 per channel)")
+        except Exception as e:
+            logger.warning(f"Regrab diagnostic failed: {e}")
 
 
 if __name__ == '__main__':

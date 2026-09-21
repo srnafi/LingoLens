@@ -78,3 +78,16 @@ settings.json
 # Node / Electron
 node_modules/
 dist/
+
+# Local-only files: tracked locally for development/testing but never pushed
+# to the remote repo. Only code files needed for deployment are committed.
+# (see .gitattributes for export rules)
+docs/
+python/tests/
+python/test_overlay.py
+python/test_pipeline.py
+python/conftest.py
+python/tools/
+
+# Agent/Hermes instruction and tracking files — local only
+AGENTS.md
