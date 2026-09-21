@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 import cv2
 import numpy as np
 from openvino import Core
@@ -12,6 +13,109 @@ crops_folder = _this_dir / "crops"
 crops_folder.mkdir(parents=True, exist_ok=True)
 
 _detector_instance = None
+
+# ---------------------------------------------------------------------------
+# Detection thresholds (spec section 5, defect 7)
+# ---------------------------------------------------------------------------
+CONF_THRESHOLD = float(os.environ.get("LINGOLENS_CONF", "0.3"))
+NMS_IOU = 0.1
+MIN_BOX_PX = 6  # drop boxes narrower or shorter than this many pixels
+
+
+def postprocess_predictions(preds, sx, sy, img_w, img_h, conf_thr=None, iou_thr=None):
+    """Post-process OpenVINO text-detection predictions into kept boxes.
+
+    Pure function -- no I/O, no model state. Steps:
+    1. Drop all-zero rows (padding / empty predictions).
+    2. Drop rows with confidence < conf_thr.
+    3. Scale normalized coords back to original image space.
+    4. Clamp to [0, W] x [0, H].
+    5. Drop degenerate boxes (width or height < MIN_BOX_PX).
+    6. Non-maximum suppression.
+
+    Parameters
+    ----------
+    preds : np.ndarray, shape (N, 5)
+        Each row: [x_min_n, y_min_n, x_max_n, y_max_n, conf] in normalized coords.
+    sx, sy : float
+        Scale factors from model size to image size.
+    img_w, img_h : int
+        Original image dimensions (for clamping).
+    conf_thr : float or None
+        Confidence threshold; defaults to CONF_THRESHOLD.
+    iou_thr : float or None
+        NMS IoU threshold; defaults to NMS_IOU.
+
+    Returns
+    -------
+    list[list[float]]
+        Kept boxes as [x0, y0, x1, y1, conf], clamped and sorted by confidence desc.
+    """
+    import numpy as np
+
+    if conf_thr is None:
+        conf_thr = CONF_THRESHOLD
+    if iou_thr is None:
+        iou_thr = NMS_IOU
+
+    if preds is None or len(preds) == 0:
+        return []
+
+    preds = np.asarray(preds, dtype=np.float64)
+    if preds.ndim == 1:
+        preds = preds[np.newaxis, :]
+
+    # 1. Drop all-zero rows
+    preds = preds[~np.all(preds == 0, axis=1)]
+
+    # 2. Drop low-confidence
+    if len(preds) > 0:
+        confs = preds[:, -1]
+        preds = preds[confs >= conf_thr]
+
+    if len(preds) == 0:
+        return []
+
+    # 3. Scale to image coordinates
+    boxes = []
+    for p in preds:
+        x_min = float(p[0] * sx)
+        y_min = float(p[1] * sy)
+        x_max = float(p[2] * sx)
+        y_max = float(p[3] * sy)
+        conf = float(p[4])
+        boxes.append([x_min, y_min, x_max, y_max, conf])
+
+    # 4. Clamp to image bounds
+    for b in boxes:
+        b[0] = max(0.0, min(b[0], float(img_w)))
+        b[1] = max(0.0, min(b[1], float(img_h)))
+        b[2] = max(0.0, min(b[2], float(img_w)))
+        b[3] = max(0.0, min(b[3], float(img_h)))
+
+    # 5. Drop degenerate boxes
+    boxes = [b for b in boxes
+             if (b[2] - b[0]) >= MIN_BOX_PX and (b[3] - b[1]) >= MIN_BOX_PX]
+
+    if not boxes:
+        return []
+
+    # 6. NMS (using the existing calculate_iou / nms logic)
+    det = TextDetector.__new__(TextDetector)
+    boxes_only = [[b[0], b[1], b[2], b[3]] for b in boxes]
+    scores = [b[4] for b in boxes]
+    kept = det.nms(boxes_only, scores, iou_thresh=iou_thr)
+
+    # Re-attach confidence to kept boxes
+    kept_with_conf = []
+    for kb in kept:
+        for b in boxes:
+            if b[:4] == kb:
+                kept_with_conf.append(list(b))
+                break
+    # Sort by confidence descending
+    kept_with_conf.sort(key=lambda b: b[4], reverse=True)
+    return kept_with_conf
 
 
 def get_detector():
@@ -79,38 +183,42 @@ class TextDetector:
         result = self.execution_net.infer_new_request({self.input_layer.any_name: inp})
         preds = result[1]
 
-        if preds.ndim == 1:
-            preds = preds[np.newaxis, :]
-        preds = preds[~np.all(preds == 0, axis=1)]
-
         # Scale back to original image coordinates
         ry, rx = img.shape[:2]
         rry, rrx = resized.shape[:2]
         sx, sy = rx / rrx, ry / rry
         logger.info(f"Scale factors: sx={sx:.4f}, sy={sy:.4f}")
 
-        boxes, confs = [], []
-        for p in preds:
-            conf = p[-1]
-            x_min = int(max(p[0] * sx, 0))
-            y_min = int(max(p[1] * sy, 0))
-            x_max = int(p[2] * sx)
-            y_max = int(p[3] * sy)
-            boxes.append([x_min, y_min, x_max, y_max])
-            confs.append(conf)
-
-        nms_boxes = self.nms(boxes, confs, iou_thresh=0.1)
+        raw_count = len(preds) if preds is not None else 0
+        t0 = time.time()
+        kept_boxes = postprocess_predictions(preds, sx, sy, img_w, img_h)
+        pp_ms = (time.time() - t0) * 1000
+        logger.info(f"Detect: raw={raw_count}, kept={len(kept_boxes)}, "
+                     f"conf_thr={CONF_THRESHOLD}, nms_iou={NMS_IOU}, postprocess={pp_ms:.1f}ms")
 
         coordinates = []
-        for box in nms_boxes:
-            x_min, y_min, x_max, y_max = box
+        for box in kept_boxes:
+            x_min, y_min, x_max, y_max = [int(round(v)) for v in box[:4]]
+            # Clamp (postprocess already clamped floats, but int rounding can push
+            # a value to exactly img_w/img_h which is out of range for slicing)
+            x_min = max(0, min(x_min, img_w - 1))
+            y_min = max(0, min(y_min, img_h - 1))
+            x_max = max(0, min(x_max, img_w))
+            y_max = max(0, min(y_max, img_h))
+            if x_max <= x_min or y_max <= y_min:
+                logger.debug(f"Skip degenerate crop: ({x_min},{y_min})->({x_max},{y_max})")
+                continue
             crop = img[y_min:y_max, x_min:x_max]
+            if crop.size == 0:
+                logger.debug(f"Skip empty crop at ({x_min},{y_min})->({x_max},{y_max})")
+                continue
             fname = f"{x_min},{x_max},{y_min},{y_max}.png"
             fpath = os.path.join(crops_folder, fname)
             cv2.imwrite(fpath, crop)
             coordinates.append({
                 'x_min': x_min, 'y_min': y_min,
                 'x_max': x_max, 'y_max': y_max,
+                'conf': float(box[4]) if len(box) > 4 else 0.0,
                 'file_name': fpath,
             })
 

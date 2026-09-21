@@ -26,7 +26,13 @@ from overlay import (
 
 
 def _make_word(text, x_min, y_min, x_max, y_max):
-    """Helper: create a word dict like OCR would produce."""
+    """Helper: create a word dict like OCR would produce.
+
+    Enforces x_min < x_max and y_min < y_max; raises AssertionError if the
+    box is inverted, which was a source of false passes in 7 of 29 calls.
+    """
+    assert x_min < x_max, f"_make_word: x_min ({x_min}) >= x_max ({x_max}) for '{text}'"
+    assert y_min < y_max, f"_make_word: y_min ({y_min}) >= y_max ({y_max}) for '{text}'"
     return {
         'text': text,
         'x_min': x_min, 'x_max': x_max,
@@ -75,8 +81,8 @@ def test_group_words_into_lines_simple():
 
 def test_group_words_into_lines_separate():
     """Words on different Y lines should NOT group together."""
-    w1 = _make_word("Line1", 10, 100, 50, 20)   # y center ~15
-    w2 = _make_word("Line2", 10, 200, 50, 25)   # y center ~212.5
+    w1 = _make_word("Line1", 10, 20, 50, 100)   # y center ~60
+    w2 = _make_word("Line2", 10, 225, 50, 250)  # y center ~237.5, height 25
 
     lines = _group_words_into_lines([w1, w2])
     assert len(lines) == 2
@@ -100,11 +106,11 @@ def test_group_lines_into_paragraphs():
 
 def test_paragraph_text_flatten():
     """Test that paragraph text is extracted correctly."""
-    line1 = [_make_word("Hello", 10, 100, 50, 20),
-             _make_word("world", 60, 100, 100, 20)]
-    line2 = [_make_word("This", 10, 30, 50, 15),
-             _make_word("is", 60, 30, 90, 15),
-             _make_word("test", 100, 30, 140, 15)]
+    line1 = [_make_word("Hello", 10, 20, 50, 100),
+             _make_word("world", 60, 20, 100, 100)]
+    line2 = [_make_word("This", 10, 15, 50, 30),
+             _make_word("is", 60, 15, 90, 30),
+             _make_word("test", 100, 15, 140, 30)]
 
     text = _para_to_text([line1, line2])
     assert 'Hello' in text
@@ -150,17 +156,20 @@ def test_paragraph_bbox():
 
 
 def test_ui_button_grouping():
-    """UI buttons: 'Cancel' and 'OK' on far-apart X but same Y should
-    group into same line but separate paragraphs if vertically separated."""
-    # Two buttons side by side on same line
+    """UI buttons: 'Cancel' and 'OK' on far-apart X but same Y.
+
+    With COLUMN_GAP splitting, two far-apart buttons on the same row become
+    2 line segments -> 2 blocks. This is the correct behavior (spec 6.2).
+    """
+    # Two buttons side by side on same line, far apart
     words = [
         _make_word("Cancel", 100, 10, 200, 30),
         _make_word("OK", 300, 10, 350, 30),
     ]
     lines = _group_words_into_lines(words)
     paragraphs = _group_lines_into_paragraphs(lines)
-    assert len(lines) == 1  # Same line
-    assert len(paragraphs) == 1  # Same paragraph (one line)
+    assert len(lines) == 2  # COLUMN_GAP split
+    assert len(paragraphs) == 2  # 2 separate blocks
     print("test_ui_button_grouping: PASS")
 
 
