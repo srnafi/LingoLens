@@ -10,9 +10,9 @@ Originally developed with Electron, LingoLens has been fully refactored into a *
 
 - **⚡ Native PyQt5 Control Center**: Modern dark-themed dashboard (Catppuccin Mocha aesthetic) for complete control over source/destination languages, capture window appearance, overlay opacity, and font styling.
 - **🌐 Expanded Global Language Support**: Supports OCR and translation across 20+ languages including English, Spanish, French, German, Italian, Portuguese, Russian, Vietnamese, Bengali, Hindi, Simplified Chinese, Japanese, Korean, Arabic, Urdu, Dutch, Turkish, Polish, Indonesian, and Thai.
-- **🔄 Robust Multi-Service Fallback Translation**: Tiered fallback system (`googletrans` → `deep_translator` Google → `deep_translator` MyMemory) ensures zero-failure offline/online translation resilience.
+- **🔄 Robust Multi-Service Fallback Translation**: Tiered fallback system (`deep_translator` Google → `deep_translator` MyMemory) ensures zero-failure offline/online translation resilience. `googletrans` is intentionally excluded: it is not in `requirements.txt` and its current PyPI release (4.0.2) is async-incompatible with this synchronous pipeline.
 - **🧠 Persistent OCR Model Architecture**: Flask OCR backend runs locally, loading the heavy EasyOCR model **once** into memory upon startup to guarantee lightning-fast response times on every screen snip.
-- **🪟 Transparent Screen Overlays**: Frameless, always-on-top PyQt5 and Tkinter overlay windows render translated text precisely at original screen coordinates with customizable box fill, border width, text color, and background alpha transparency.
+- **🪟 Transparent Screen Overlays**: Frameless, always-on-top PyQt5 overlay windows render translated text precisely at original screen coordinates. Source background is preserved via pixel-accurate inpainting (ring-median fill for flat backgrounds, single-pass inpaint for textured ones). `alpha` settings control the selection-tint overlay, not patches.
 - **⌨️ Global Hotkeys**: Press `Alt+Shift+M` anywhere on your screen to instantly trigger screen capture and OCR translation.
 
 ---
@@ -24,15 +24,24 @@ LingoLens/
 ├── app.py                      # PyQt5 Control Center (Main UI & Process Manager)
 ├── python/
 │   ├── ocr_server.py           # Persistent Flask OCR REST API server
-│   ├── capture.py              # PyQt5 Screen Capture Widget
+│   ├── capture.py              # PyQt5 Screen Capture Widget (freeze-frame, DPI-aware)
 │   ├── detector.py             # OpenVINO Text Detection & Cropping Engine
-│   ├── overlay.py              # Paragraph grouping, Translation & Overlay Renderer
-│   └── translator.py           # Multi-service fallback translation module
+│   ├── blocks.py               # Word/Line/Block grouping, text joining (pure, headless)
+│   ├── blend.py                # Background removal, colour fitting, RGBA overlay render (pure, headless)
+│   ├── overlay.py              # OverlayWindow, registry, dismissal, show_translations()
+│   ├── debug_dump.py           # Writes debug/<stamp>/ artifacts when LINGOLENS_DEBUG=1
+│   └── translator.py           # Multi-service fallback translation (deep_translator Google → MyMemory)
 ├── run.py                      # Python launcher script
 ├── run.bat                     # Windows batch launcher
-├── ARCHITECTURE.md             # Technical architecture documentation
-├── DEVELOPMENT_LOG.md          # Development recovery & migration log
-└── MIGRATION_PLAN.md           # Electron-to-Python migration plan
+├── settings.json               # User settings (gitignored)
+├── AGENTS.md                   # Agent instructions (local only)
+├── docs/
+│   ├── OVERLAY_SPEC.md         # Full design spec, algorithms, acceptance criteria
+│   ├── PROGRESS.md             # Phase progress tracker
+│   └── reference/
+│       ├── blend_reference.py  # Tested reference of the blending core
+│       └── qt_lifecycle_repro.py # Reproduces the "overlay never appears" bug
+└── debug/                      # Rendered debug artifacts (gitignored, created at runtime)
 ```
 
 ---
@@ -80,6 +89,35 @@ python run.py
 2. Select your **Source OCR Language** and **Destination Translation Language**.
 3. Customize your selection box fill color, opacity, text color, and font size in the settings tabs.
 4. Press **`Alt+Shift+M`** (or click **⚡ Snip & Translate Now**), drag a box around any text on your screen, and watch the instant translation render in place!
+
+The Flask OCR server starts automatically. On first run, EasyOCR downloads its model weights.
+
+---
+
+## 🐛 Debug Mode
+
+Set `LINGOLENS_DEBUG=1` to write per-snip artifacts under `debug/<timestamp>/`:
+`capture.png`, `boxes.png`, `blocks.png`, `removed.png`, `overlay_rgba.png`, `composite.png`, `metrics.json`, `timings.json`, and `env.json`. These are for diagnosing translation placement, background removal, and overlay issues. Add `LINGOLENS_DEBUG_OUTLINE=1` to draw a cyan outline around the snip region and magenta outlines around detected text blocks.
+
+---
+
+## 🧪 Testing
+
+```bash
+# Compile check
+.venv/Scripts/python.exe -m py_compile app.py python/*.py
+
+# Headless test suite (QT_QPA_PLATFORM=offscreen)
+QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m pytest python -q
+
+# Reference blend acceptance table
+.venv/Scripts/python.exe docs/reference/blend_reference.py
+
+# Replay a real debug dump offline
+.venv/Scripts/python.exe python/tools/replay.py debug/<timestamp>
+```
+
+Tests live under `python/tests/` and `python/` (local only, not committed). See `docs/OVERLAY_SPEC.md` for full acceptances and `docs/PROGRESS.md` for the phase-by-phase status.
 
 ---
 
