@@ -121,5 +121,3 @@ Tests live under `python/tests/` and `python/` (local only, not committed). See 
 
 ---
 
-## 📄 License
-MIT License
