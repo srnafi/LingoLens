@@ -83,5 +83,3 @@ python run.py
 
 ---
 
-## 📄 License
-MIT License
