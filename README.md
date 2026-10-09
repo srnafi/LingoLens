@@ -8,7 +8,7 @@ Originally developed with Electron, LingoLens has been fully refactored into a *
 
 ## 🌟 Key Features
 
-- **⚡ Native PyQt5 Control Center**: Modern dark-themed dashboard (Catppuccin Mocha aesthetic) for complete control over source/destination languages, capture window appearance, overlay opacity, and font styling.
+- **Native PyQt5 Control Center**: Minimal frameless dark-themed window for source/destination languages, recent pairs, and one-click snipping — capture appearance, overlay opacity, and font styling live in the Settings dialog.
 - **🌐 Expanded Global Language Support**: Supports OCR and translation across 20+ languages including English, Spanish, French, German, Italian, Portuguese, Russian, Vietnamese, Bengali, Hindi, Simplified Chinese, Japanese, Korean, Arabic, Urdu, Dutch, Turkish, Polish, Indonesian, and Thai.
 - **🔄 Robust Multi-Service Fallback Translation**: Tiered fallback system (`deep_translator` Google → `deep_translator` MyMemory) ensures zero-failure offline/online translation resilience. `googletrans` is intentionally excluded: it is not in `requirements.txt` and its current PyPI release (4.0.2) is async-incompatible with this synchronous pipeline.
 - **🧠 Persistent OCR Model Architecture**: Flask OCR backend runs locally, loading the heavy EasyOCR model **once** into memory upon startup to guarantee lightning-fast response times on every screen snip.
@@ -87,8 +87,8 @@ python run.py
 ## ⌨️ Usage
 1. Open the LingoLens Control Center.
 2. Select your **Source OCR Language** and **Destination Translation Language**.
-3. Customize your selection box fill color, opacity, text color, and font size in the settings tabs.
-4. Press **`Alt+Shift+M`** (or click **⚡ Snip & Translate Now**), drag a box around any text on your screen, and watch the instant translation render in place!
+3. Customize your selection box fill color, opacity, text color, and font size in the Settings dialog (gear button).
+4. Press **`Alt+Shift+M`** (or click **Snip & Translate**), drag a box around any text on your screen, and watch the instant translation render in place!
 
 The Flask OCR server starts automatically. On first run, EasyOCR downloads its model weights.
 

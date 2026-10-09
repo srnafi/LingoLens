@@ -1,116 +1,353 @@
+"""LingoLens Control Center — frameless single-screen UI (Linear-minimal).
+
+Layout (action only, no marketing copy):
+    [icon LingoLens]  [OCR status pill] [settings] [–] [×]   <- custom titlebar
+    [      Snip & Translate  ·  Alt+Shift+M      ]           <- hero CTA
+    [ FROM ▾ ] [swap] [ TO ▾ ]                               <- language pair
+    [ RECENT: chips ]                                        <- hidden when empty
+
+All appearance knobs (capture fill/opacity/border, text color/alpha/size)
+live in the Settings dialog (gear button). Backend contracts unchanged:
+Flask OCR server on :5000, capture.py argv order, Alt+Shift+M hotkey.
+"""
 import sys
-import os
 import json
 import subprocess
 import ctypes
 import ctypes.wintypes
 from pathlib import Path
+
+# Set DPI awareness BEFORE any Qt import. Without this, Windows bitmap-scales
+# the whole window on scaled displays and all text renders blurry.
+# (Mirrors python/capture.py.)
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor aware
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 from PyQt5 import QtWidgets, QtCore, QtGui
 
 SETTINGS_FILE = Path(__file__).parent / "settings.json"
 
-# Modern Dark Theme Stylesheet (Catppuccin Mocha aesthetic)
-DARK_STYLESHEET = """
+# Source languages. Option int selects the EasyOCR model bundle
+# (must stay in sync with python/ocr_server.py LANGUAGE_MAP).
+FROM_LANGS = [
+    ("English", 1), ("Spanish", 1), ("French", 1), ("Italian", 1),
+    ("Portuguese", 1), ("Vietnamese", 1), ("German", 1),
+    ("Chinese", 2), ("Japanese", 3), ("Russian", 4),
+    ("Bengali", 5), ("Korean", 6),
+]
+FROM_SHORT = ["EN", "ES", "FR", "IT", "PT", "VI", "DE",
+              "ZH", "JA", "RU", "BN", "KO"]
+
+TO_LANGS = [
+    ("English", "en"), ("Spanish", "es"), ("French", "fr"), ("German", "de"),
+    ("Italian", "it"), ("Portuguese", "pt"), ("Russian", "ru"),
+    ("Vietnamese", "vi"), ("Bengali", "bn"), ("Hindi", "hi"),
+    ("Chinese (Simplified)", "zh-CN"), ("Japanese", "ja"), ("Korean", "ko"),
+    ("Arabic", "ar"), ("Urdu", "ur"), ("Dutch", "nl"), ("Turkish", "tr"),
+    ("Polish", "pl"), ("Indonesian", "id"), ("Thai", "th"),
+]
+
+MAX_RECENTS = 3
+
+
+def _base_name(name):
+    """'Chinese (Simplified)' -> 'chinese'. Used for From/To swap matching."""
+    return name.split("(")[0].strip().lower()
+
+
+def _is_swappable(from_name, to_name):
+    """A pair can flip only if both sides exist in both lists (OCR model needed)."""
+    from_bases = {_base_name(n) for n, _ in FROM_LANGS}
+    to_bases = {_base_name(n) for n, _ in TO_LANGS}
+    return (_base_name(from_name) in to_bases
+            and _base_name(to_name) in from_bases)
+
+
+def _paint_icon(kind, size=18, color="#e8eaf2"):
+    """Paint a small icon with QPainter — no font/emoji dependency.
+
+    Emoji/symbol glyphs (bolt, gear) do not exist in Segoe UI and render as
+    blank buttons on systems without a color-emoji font fallback for Qt.
+    Painted paths always render.
+    """
+    pm = QtGui.QPixmap(size, size)
+    pm.fill(QtCore.Qt.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+    c = QtGui.QColor(color)
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(c)
+    cx = size / 2.0
+    if kind == "gear":
+        # 8 teeth + ring body + clear punched hole.
+        for i in range(8):
+            p.save()
+            p.translate(cx, cx)
+            p.rotate(i * 45.0)
+            tooth_w = size * 0.16
+            tooth_h = size * 0.20
+            p.drawRect(QtCore.QRectF(-tooth_w / 2.0,
+                                     -size * 0.46,
+                                     tooth_w, tooth_h))
+            p.restore()
+        p.drawEllipse(QtCore.QRectF(cx - size * 0.30, cx - size * 0.30,
+                                    size * 0.60, size * 0.60))
+        p.setCompositionMode(QtGui.QPainter.CompositionMode_Clear)
+        p.drawEllipse(QtCore.QRectF(cx - size * 0.13, cx - size * 0.13,
+                                    size * 0.26, size * 0.26))
+    elif kind == "bolt":
+        s = size / 18.0
+        p.drawPolygon(QtGui.QPolygonF([
+            QtCore.QPointF(10.5 * s, 1.5 * s),
+            QtCore.QPointF(5.5 * s, 10.0 * s),
+            QtCore.QPointF(8.6 * s, 10.0 * s),
+            QtCore.QPointF(7.2 * s, 16.5 * s),
+            QtCore.QPointF(12.6 * s, 6.8 * s),
+            QtCore.QPointF(9.5 * s, 6.8 * s),
+        ]))
+    p.end()
+    return QtGui.QIcon(pm)
+
+
+# Linear-minimal dark theme. Flat fills + one linear gradient (QSS supports
+# qlineargradient; it does NOT support blur/glow, so depth comes from the
+# drop-shadow effect applied in code).
+LINEAR_QSS = """
 QWidget {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    font-family: 'Segoe UI', Arial, sans-serif;
+    background-color: transparent;
+    color: #f4f4f8;
+    font-family: 'Segoe UI', Inter, Arial, sans-serif;
     font-size: 10pt;
 }
+QWidget#card {
+    background-color: #0d0f14;
+    border: 1px solid #2a2d36;
+    border-radius: 14px;
+}
+QLabel#appTitle {
+    font-size: 12pt;
+    font-weight: 800;
+}
+QLabel#captionLabel {
+    color: #6c7086;
+    font-size: 8.5pt;
+    font-weight: 700;
+}
 QPushButton {
-    background-color: #313244;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-    border-radius: 6px;
+    background-color: #14161d;
+    color: #e8eaf2;
+    border: 1px solid #2a2d36;
+    border-radius: 8px;
     padding: 8px 12px;
-    font-weight: 500;
 }
 QPushButton:hover {
-    background-color: #45475a;
-    border-color: #585b70;
+    background-color: #1a1d26;
+    border-color: #5e6ad2;
 }
 QPushButton:pressed {
-    background-color: #585b70;
+    background-color: #101218;
 }
-QPushButton:checked {
-    background-color: #89b4fa;
-    color: #11111b;
-    font-weight: bold;
+QPushButton:disabled {
+    color: #565b70;
+    border-color: #1c1e24;
+    background-color: #101218;
+}
+QPushButton:focus {
+    outline: none;
+    border-color: #5e6ad2;
+}
+QPushButton#ctaButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #707aea, stop:0.5 #5e6ad2, stop:1 #4953ad);
+    color: #ffffff;
+    font-size: 12pt;
+    font-weight: 700;
+    border: 1px solid #828cea;
+    border-radius: 12px;
+    padding: 13px;
+}
+QPushButton#ctaButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #7d87f2, stop:0.5 #6a74de, stop:1 #515bb8);
+    border-color: #929bf2;
+}
+QPushButton#ctaButton:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #5a64d6, stop:1 #3f4796);
+}
+QPushButton#statusButton {
+    font-size: 9pt;
+    font-weight: 700;
+}
+QPushButton#chipButton {
+    border-radius: 12px;
+    padding: 5px 13px;
+    font-size: 9pt;
+    font-weight: 600;
+    color: #a5a9bd;
+}
+QPushButton#chipButton:hover {
+    color: #ffffff;
+}
+QPushButton#toolButton {
+    font-size: 13pt;
+    padding: 4px 10px;
+    min-width: 42px;
+}
+QPushButton#winButton {
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    color: #8b8fa3;
+    font-size: 11pt;
+    min-width: 34px;
+    padding: 4px 6px;
+}
+QPushButton#winButton:hover {
+    background-color: #1c1f27;
+    color: #ffffff;
+    border: none;
+}
+QPushButton#closeButton {
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    color: #8b8fa3;
+    font-size: 11pt;
+    min-width: 34px;
+    padding: 4px 6px;
+}
+QPushButton#closeButton:hover {
+    background-color: #e81123;
+    color: #ffffff;
+    border: none;
+}
+QComboBox {
+    background-color: #14161d;
+    border: 1px solid #2a2d36;
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: #e8eaf2;
+}
+QComboBox:hover {
+    border-color: #5e6ad2;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 26px;
+}
+QComboBox QAbstractItemView {
+    background-color: #14161d;
+    border: 1px solid #2a2d36;
+    selection-background-color: #5e6ad2;
+    selection-color: #ffffff;
+    outline: none;
+}
+QDialog {
+    background-color: #0d0f14;
 }
 QGroupBox {
-    border: 1px solid #45475a;
+    border: 1px solid #2a2d36;
     border-radius: 8px;
-    margin-top: 10px;
-    padding-top: 15px;
-    font-weight: bold;
-    color: #89b4fa;
+    margin-top: 14px;
+    padding-top: 16px;
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-bottom: 12px;
+    font-weight: 700;
+    color: #8b8fa3;
+    font-size: 9pt;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
     left: 10px;
-    padding: 0 5px;
+    padding: 0 6px;
 }
 QSlider::groove:horizontal {
-    border: 1px solid #45475a;
-    height: 6px;
-    background: #313244;
-    border-radius: 3px;
+    border: none;
+    height: 4px;
+    background: #2a2d36;
+    border-radius: 2px;
 }
 QSlider::handle:horizontal {
-    background: #89b4fa;
+    background: #5e6ad2;
     border: none;
     width: 14px;
     height: 14px;
-    margin: -4px 0;
+    margin: -5px 0;
     border-radius: 7px;
 }
 QSlider::handle:horizontal:hover {
-    background: #b4befe;
+    background: #6c78dd;
 }
-QScrollArea {
-    border: none;
-    background: transparent;
+QFrame#swatch {
+    border: 1px solid #2a2d36;
+    border-radius: 5px;
 }
 """
+
+STATUS_STYLE = {
+    # state: (text, accent color)
+    "ready": ("OCR ready", "#4ade80"),
+    "starting": ("OCR starting", "#f9e2af"),
+    "offline": ("OCR offline — retry", "#f38ba8"),
+}
+
 
 class LingoLensControlCenter(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LingoLens - Next-Gen AI Translation & OCR")
-        self.resize(800, 600)
-        self.setMinimumSize(700, 500)
-        self.setStyleSheet(DARK_STYLESHEET)
+        # Frameless + translucent: rounded outer corners and a dark custom
+        # titlebar. (Native Win32 chrome is square and light — the old look.)
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.Window)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setWindowTitle("LingoLens")
+        self._drag_pos = None
 
-        # State variables & advanced customization defaults
-        self.source_lang_option = 1  
+        # State & appearance defaults
+        self.source_lang_option = 1
+        self.source_lang_name = "English"
         self.dest_lang = "en"
+        self.dest_lang_name = "English"
         self.fill_color = "#ff0000"
         self.text_color = "#000000"
         self.opacity = 0.3
         self.line_width = 3
         self.alpha = 0.7
         self.font_size = 12
+        self.recent_pairs = []
 
         self.flask_process = None
         self.snip_process = None
         self.nativeEventFilter = None
 
         self.init_ui()
+        # Window hugs its content — no dead space, no manual resize().
+        self.layout().setSizeConstraint(QtWidgets.QLayout.SetFixedSize)
         self.load_settings()
         self.start_flask_server()
         self.init_global_hotkey()
 
+    # ---------- settings persistence ----------
     def save_settings(self):
         """Persist user preferences to disk."""
         settings = {
             "source_lang_option": self.source_lang_option,
+            "source_lang_name": self.source_lang_name,
             "dest_lang": self.dest_lang,
+            "dest_lang_name": self.dest_lang_name,
             "fill_color": self.fill_color,
             "text_color": self.text_color,
             "opacity": self.opacity,
             "line_width": self.line_width,
             "alpha": self.alpha,
             "font_size": self.font_size,
+            "recent_pairs": self.recent_pairs,
         }
         try:
             with open(SETTINGS_FILE, 'w') as f:
@@ -126,20 +363,34 @@ class LingoLensControlCenter(QtWidgets.QWidget):
             with open(SETTINGS_FILE, 'r') as f:
                 settings = json.load(f)
             self.source_lang_option = settings.get("source_lang_option", 1)
+            self.source_lang_name = settings.get("source_lang_name", "English")
             self.dest_lang = settings.get("dest_lang", "en")
+            self.dest_lang_name = settings.get("dest_lang_name", "English")
             self.fill_color = settings.get("fill_color", "#ff0000")
             self.text_color = settings.get("text_color", "#000000")
             self.opacity = settings.get("opacity", 0.3)
             self.line_width = settings.get("line_width", 3)
             self.alpha = settings.get("alpha", 0.7)
             self.font_size = settings.get("font_size", 12)
-            # Update UI sliders to reflect loaded values
-            self.opacity_slider.setValue(int(self.opacity * 100))
-            self.linewidth_slider.setValue(self.line_width)
-            self.alpha_slider.setValue(int(self.alpha * 100))
-            self.fontsize_slider.setValue(self.font_size)
-            self.color_btn.setText(f"Pick Color ({self.fill_color})")
-            self.text_color_btn.setText(f"Pick Text Color ({self.text_color})")
+            self.recent_pairs = self._sanitize_recents(
+                settings.get("recent_pairs", []))
+
+            # Reflect loaded values in the combos without firing handlers.
+            from_idx = self._find_from_index(
+                self.source_lang_name, self.source_lang_option)
+            to_idx = self._find_to_index(self.dest_lang)
+            self.from_combo.blockSignals(True)
+            self.from_combo.setCurrentIndex(from_idx)
+            self.from_combo.blockSignals(False)
+            self.to_combo.blockSignals(True)
+            self.to_combo.setCurrentIndex(to_idx)
+            self.to_combo.blockSignals(False)
+            self.source_lang_name = FROM_LANGS[from_idx][0]
+            self.source_lang_option = FROM_LANGS[from_idx][1]
+            self.dest_lang = TO_LANGS[to_idx][1]
+            self.dest_lang_name = TO_LANGS[to_idx][0]
+            self._update_swap_state()
+            self._refresh_recent_chips()
             print(f"Settings loaded from {SETTINGS_FILE}")
         except Exception as e:
             print(f"Failed to load settings: {e}")
@@ -147,302 +398,527 @@ class LingoLensControlCenter(QtWidgets.QWidget):
     def reset_defaults(self):
         """Reset all settings to factory defaults."""
         self.source_lang_option = 1
+        self.source_lang_name = "English"
         self.dest_lang = "en"
+        self.dest_lang_name = "English"
         self.fill_color = "#ff0000"
         self.text_color = "#000000"
         self.opacity = 0.3
         self.line_width = 3
         self.alpha = 0.7
         self.font_size = 12
-        # Update UI
-        self.opacity_slider.setValue(30)
-        self.linewidth_slider.setValue(3)
-        self.alpha_slider.setValue(70)
-        self.fontsize_slider.setValue(12)
-        self.color_btn.setText("Pick Color (#ff0000)")
-        self.text_color_btn.setText("Pick Text Color (#000000)")
+        self.from_combo.blockSignals(True)
+        self.from_combo.setCurrentIndex(0)
+        self.from_combo.blockSignals(False)
+        self.to_combo.blockSignals(True)
+        self.to_combo.setCurrentIndex(0)
+        self.to_combo.blockSignals(False)
+        self._update_swap_state()
         self.save_settings()
         self.restart_flask_server()
         print("Settings reset to defaults")
 
+    # ---------- main UI: action only ----------
     def init_ui(self):
-        # Sidebar Navigation Panel
-        sidebar = QtWidgets.QVBoxLayout()
-        sidebar.setContentsMargins(0, 0, 0, 0)
-        sidebar.setSpacing(10)
+        # Outer transparent layer: room for the card's drop shadow.
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(0)
 
-        title_label = QtWidgets.QLabel("LingoLens")
-        title_label.setStyleSheet("font-size: 16pt; font-weight: bold; color: #89b4fa; margin-bottom: 10px;")
-        sidebar.addWidget(title_label)
-        
-        btn_ocr = QtWidgets.QPushButton("🌐 Languages & OCR")
-        btn_capture = QtWidgets.QPushButton("🎨 Overlay & Capture")
-        btn_overlay = QtWidgets.QPushButton("⚙️ Font & Alpha")
-        
-        btn_snip_now = QtWidgets.QPushButton("⚡ Snip & Translate Now")
-        btn_snip_now.setStyleSheet("""
-            background-color: #a6e3a1; 
-            color: #11111b; 
-            font-weight: bold; 
-            font-size: 11pt;
-            padding: 12px;
-            border-radius: 8px;
-        """)
-        btn_snip_now.clicked.connect(self.trigger_snip)
+        card = QtWidgets.QWidget()
+        card.setObjectName("card")
+        shadow = QtWidgets.QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 5)
+        shadow.setColor(QtGui.QColor(0, 0, 0, 180))
+        card.setGraphicsEffect(shadow)
+        root.addWidget(card)
 
-        btn_reset = QtWidgets.QPushButton("↺ Reset Defaults")
-        btn_reset.setStyleSheet("color: #f38ba8; font-size: 9pt;")
-        btn_reset.clicked.connect(self.reset_defaults)
+        body = QtWidgets.QVBoxLayout(card)
+        body.setContentsMargins(20, 14, 20, 18)
+        body.setSpacing(13)
 
-        for btn in (btn_ocr, btn_capture, btn_overlay):
-            btn.setStyleSheet("text-align: left; padding: 10px; border-radius: 6px;")
+        # ---- custom dark titlebar: icon + wordmark ... status, gear, min, close
+        bar_wrap = QtWidgets.QWidget()
+        bar = QtWidgets.QHBoxLayout(bar_wrap)
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(8)
 
-        sidebar.addWidget(btn_ocr)
-        sidebar.addWidget(btn_capture)
-        sidebar.addWidget(btn_overlay)
-        sidebar.addStretch()
-        sidebar.addWidget(btn_reset)
-        sidebar.addWidget(btn_snip_now)
+        self.title_icon_lbl = QtWidgets.QLabel()
+        icon_path = Path(__file__).parent / "icon.png"
+        if icon_path.exists():
+            pm = QtGui.QPixmap(str(icon_path)).scaled(
+                20, 20, QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation)
+            self.title_icon_lbl.setPixmap(pm)
+        bar.addWidget(self.title_icon_lbl)
 
-        sidebar_widget = QtWidgets.QWidget()
-        sidebar_widget.setLayout(sidebar)
-        sidebar_widget.setFixedWidth(200)
+        app_title = QtWidgets.QLabel(
+            '<span style="color:#f4f4f8">Lingo</span>'
+            '<span style="color:#7c86e6">Lens</span>')
+        app_title.setObjectName("appTitle")
+        app_title.setTextFormat(QtCore.Qt.RichText)
+        bar.addWidget(app_title)
+        bar.addStretch()
 
-        # Stacked Pages
-        self.stack = QtWidgets.QStackedWidget()
+        self.status_button = QtWidgets.QPushButton()
+        self.status_button.setObjectName("statusButton")
+        self.status_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.status_button.setToolTip(
+            "OCR engine status — click to re-check / restart")
+        self.status_button.clicked.connect(self._on_status_clicked)
+        self.status_button.setMaximumWidth(230)  # pill hugs its text
+        self._set_status("starting")
+        bar.addWidget(self.status_button)
 
-        # Page 1: Languages Selection
-        page1 = QtWidgets.QWidget()
-        p1_layout = QtWidgets.QHBoxLayout(page1)
-        p1_layout.setContentsMargins(0, 0, 0, 0)
+        gear_btn = QtWidgets.QPushButton()
+        gear_btn.setObjectName("winButton")
+        gear_btn.setIcon(_paint_icon("gear", 18))
+        gear_btn.setIconSize(QtCore.QSize(18, 18))
+        gear_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        gear_btn.setToolTip("Overlay & capture settings")
+        gear_btn.clicked.connect(self.open_settings)
+        bar.addWidget(gear_btn)
 
-        # Source Languages
-        src_group = QtWidgets.QGroupBox("Source Language (OCR)")
-        src_layout = QtWidgets.QVBoxLayout()
-        src_scroll = QtWidgets.QScrollArea()
-        src_scroll.setWidgetResizable(True)
-        src_content = QtWidgets.QWidget()
-        src_content_layout = QtWidgets.QVBoxLayout(src_content)
+        min_btn = QtWidgets.QPushButton("\u2013")
+        min_btn.setObjectName("winButton")
+        min_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        min_btn.setToolTip("Minimize")
+        min_btn.clicked.connect(self.showMinimized)
+        bar.addWidget(min_btn)
 
-        self.src_buttons = {}
-        sources = [
-            ("English / Multilingual", 1),
-            ("Spanish", 1),
-            ("French", 1),
-            ("Italian", 1),
-            ("Portuguese", 1),
-            ("Vietnamese", 1),
-            ("German", 1),
-            ("Chinese", 2),
-            ("Japanese", 3),
-            ("Russian", 4),
-            ("Bengali", 5),
-            ("Korean", 6)
-        ]
-        for name, val in sources:
-            btn = QtWidgets.QPushButton(name)
-            btn.setCheckable(True)
-            if val == 1 and name.startswith("English"):
-                btn.setChecked(True)
-                self.current_src_btn = btn
-            btn.clicked.connect(lambda checked, v=val, b=btn: self.set_source_language(v, b))
-            src_content_layout.addWidget(btn)
-            self.src_buttons[name] = btn
-        src_content_layout.addStretch()
-        src_scroll.setWidget(src_content)
-        src_layout.addWidget(src_scroll)
-        src_group.setLayout(src_layout)
+        close_btn = QtWidgets.QPushButton("\u00d7")
+        close_btn.setObjectName("closeButton")
+        close_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        close_btn.setToolTip("Quit LingoLens")
+        close_btn.clicked.connect(self.close)
+        bar.addWidget(close_btn)
 
-        # Destination Languages
-        dest_group = QtWidgets.QGroupBox("Destination Language (Translation)")
-        dest_layout = QtWidgets.QVBoxLayout()
-        dest_scroll = QtWidgets.QScrollArea()
-        dest_scroll.setWidgetResizable(True)
-        dest_content = QtWidgets.QWidget()
-        dest_content_layout = QtWidgets.QVBoxLayout(dest_content)
+        # Drag the frameless window by the titlebar background.
+        bar_wrap.mousePressEvent = lambda e: self._title_press(e)
+        bar_wrap.mouseMoveEvent = lambda e: self._title_move(e)
+        bar_wrap.mouseReleaseEvent = lambda e: self._title_release(e)
+        body.addWidget(bar_wrap)
 
-        self.dest_buttons = {}
-        destinations = [
-            ("English", "en"), ("Spanish", "es"), ("French", "fr"), ("German", "de"),
-            ("Italian", "it"), ("Portuguese", "pt"), ("Russian", "ru"), ("Vietnamese", "vi"),
-            ("Bengali", "bn"), ("Hindi", "hi"), ("Chinese (Simplified)", "zh-CN"),
-            ("Japanese", "ja"), ("Korean", "ko"), ("Arabic", "ar"), ("Urdu", "ur"),
-            ("Dutch", "nl"), ("Turkish", "tr"), ("Polish", "pl"), ("Indonesian", "id"), ("Thai", "th")
-        ]
-        for name, d in destinations:
-            btn = QtWidgets.QPushButton(name)
-            btn.setCheckable(True)
-            if d == "en":
-                btn.setChecked(True)
-                self.current_dest_btn = btn
-            btn.clicked.connect(lambda checked, lang=d, b=btn: self.set_dest_language(lang, b))
-            dest_content_layout.addWidget(btn)
-            self.dest_buttons[d] = btn
-        dest_content_layout.addStretch()
-        dest_scroll.setWidget(dest_content)
-        dest_layout.addWidget(dest_scroll)
-        dest_group.setLayout(dest_layout)
+        # ---- hero action (note: && renders a literal &)
+        self.snip_button = QtWidgets.QPushButton(
+            "Snip && Translate    \u00b7    Alt+Shift+M")
+        self.snip_button.setObjectName("ctaButton")
+        self.snip_button.setIcon(_paint_icon("bolt", 22, "#ffffff"))
+        self.snip_button.setIconSize(QtCore.QSize(22, 22))
+        self.snip_button.setMinimumHeight(60)
+        self.snip_button.setCursor(QtCore.Qt.PointingHandCursor)
+        # Stretch to fill, but never dictate the window width.
+        self.snip_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        self.snip_button.setToolTip(
+            "Capture a screen region and translate it in place (Alt+Shift+M)")
+        self.snip_button.clicked.connect(self.trigger_snip)
+        body.addWidget(self.snip_button)
 
-        p1_layout.addWidget(src_group)
-        p1_layout.addWidget(dest_group)
-        self.stack.addWidget(page1)
+        # ---- language row: From, swap, To
+        lang_row = QtWidgets.QHBoxLayout()
+        lang_row.setSpacing(8)
 
-        # Page 2: Capture Window & Customization Settings
-        page2 = QtWidgets.QWidget()
-        p2_layout = QtWidgets.QVBoxLayout(page2)
-        
-        custom_group = QtWidgets.QGroupBox("Capture & Overlay Customization")
-        custom_layout = QtWidgets.QVBoxLayout()
+        from_col = QtWidgets.QVBoxLayout()
+        from_col.setSpacing(5)
+        from_cap = QtWidgets.QLabel("FROM")
+        from_cap.setObjectName("captionLabel")
+        from_col.addWidget(from_cap)
+        self.from_combo = QtWidgets.QComboBox()
+        for name, _opt in FROM_LANGS:
+            self.from_combo.addItem(name)
+        # Hug content: never stretch to the longest item name.
+        self.from_combo.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.from_combo.setMinimumContentsLength(9)
+        self.from_combo.setMinimumWidth(150)
+        self.from_combo.currentIndexChanged.connect(self._on_from_changed)
+        from_col.addWidget(self.from_combo)
+        lang_row.addLayout(from_col, 1)
 
-        color_layout = QtWidgets.QHBoxLayout()
-        color_layout.addWidget(QtWidgets.QLabel("Selection Box Fill Color:"))
-        self.color_btn = QtWidgets.QPushButton("Pick Color (#ff0000)")
-        self.color_btn.clicked.connect(self.pick_color)
-        color_layout.addWidget(self.color_btn)
-        custom_layout.addLayout(color_layout)
+        # Swap glyph only (text ⇄ renders in Segoe UI; emoji don't).
+        self.swap_button = QtWidgets.QPushButton("\u21c4")
+        self.swap_button.setObjectName("toolButton")
+        self.swap_button.setFixedSize(40, 40)
+        self.swap_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.swap_button.setToolTip("Swap languages")
+        self.swap_button.clicked.connect(self._swap_languages)
+        lang_row.addWidget(self.swap_button, 0, QtCore.Qt.AlignBottom)
 
-        text_color_layout = QtWidgets.QHBoxLayout()
-        text_color_layout.addWidget(QtWidgets.QLabel("Translated Text Color:"))
-        self.text_color_btn = QtWidgets.QPushButton("Pick Text Color (#000000)")
-        self.text_color_btn.clicked.connect(self.pick_text_color)
-        text_color_layout.addWidget(self.text_color_btn)
-        custom_layout.addLayout(text_color_layout)
+        to_col = QtWidgets.QVBoxLayout()
+        to_col.setSpacing(5)
+        to_cap = QtWidgets.QLabel("TO")
+        to_cap.setObjectName("captionLabel")
+        to_col.addWidget(to_cap)
+        self.to_combo = QtWidgets.QComboBox()
+        for name, _code in TO_LANGS:
+            self.to_combo.addItem(name)
+        # Hug content: never stretch to the longest item name.
+        self.to_combo.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.to_combo.setMinimumContentsLength(9)
+        self.to_combo.setMinimumWidth(150)
+        self.to_combo.currentIndexChanged.connect(self._on_to_changed)
+        to_col.addWidget(self.to_combo)
+        lang_row.addLayout(to_col, 1)
+        body.addLayout(lang_row)
 
-        custom_layout.addWidget(QtWidgets.QLabel("Selection Box Opacity (0.0 - 1.0):"))
-        self.opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setValue(30)
-        self.opacity_slider.setToolTip("Controls how visible the selection box is while drawing")
-        self.opacity_slider.valueChanged.connect(self.update_opacity)
-        custom_layout.addWidget(self.opacity_slider)
+        # ---- recent pairs (chips are actions: click to re-apply)
+        self.recents_row = QtWidgets.QHBoxLayout()
+        self.recents_row.setSpacing(7)
+        self.recents_caption = QtWidgets.QLabel("RECENT")
+        self.recents_caption.setObjectName("captionLabel")
+        self.recents_row.addWidget(self.recents_caption)
+        self.recents_chips = QtWidgets.QHBoxLayout()
+        self.recents_chips.setSpacing(7)
+        self.recents_row.addLayout(self.recents_chips)
+        self.recents_row.addStretch()
+        self.recents_wrap = QtWidgets.QWidget()
+        self.recents_wrap.setLayout(self.recents_row)
+        body.addWidget(self.recents_wrap)
 
-        custom_layout.addWidget(QtWidgets.QLabel("Selection Border Line Width (1 - 10):"))
-        self.linewidth_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.linewidth_slider.setRange(1, 10)
-        self.linewidth_slider.setValue(3)
-        self.linewidth_slider.setToolTip("Thickness of the selection box border")
-        self.linewidth_slider.valueChanged.connect(self.update_linewidth)
-        custom_layout.addWidget(self.linewidth_slider)
-        
-        custom_group.setLayout(custom_layout)
-        p2_layout.addWidget(custom_group)
-        p2_layout.addStretch()
-        self.stack.addWidget(page2)
+    # ---------- frameless drag ----------
+    def _title_press(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._drag_pos = (event.globalPos()
+                              - self.frameGeometry().topLeft())
+            event.accept()
 
-        # Page 3: Font & Alpha Settings
-        page3 = QtWidgets.QWidget()
-        p3_layout = QtWidgets.QVBoxLayout(page3)
+    def _title_move(self, event):
+        if (event.buttons() & QtCore.Qt.LeftButton
+                and self._drag_pos is not None):
+            self.move(event.globalPos() - self._drag_pos)
+            event.accept()
 
-        font_group = QtWidgets.QGroupBox("Overlay Window Appearance")
-        font_layout = QtWidgets.QVBoxLayout()
+    def _title_release(self, event):
+        self._drag_pos = None
+        event.accept()
 
-        font_layout.addWidget(QtWidgets.QLabel("Overlay Background Alpha / Transparency (0.0 - 1.0):"))
-        self.alpha_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.alpha_slider.setRange(0, 100)
-        self.alpha_slider.setValue(70)
-        self.alpha_slider.setToolTip("Transparency of the translated text overlay windows")
-        self.alpha_slider.valueChanged.connect(self.update_alpha)
-        font_layout.addWidget(self.alpha_slider)
+    # ---------- language logic ----------
+    @staticmethod
+    def _find_from_index(name, option):
+        for i, (n, opt) in enumerate(FROM_LANGS):
+            if n == name:
+                return i
+        for i, (n, opt) in enumerate(FROM_LANGS):
+            if opt == option:
+                return i
+        return 0
 
-        font_layout.addWidget(QtWidgets.QLabel("Translated Text Font Size (5 - 25):"))
-        self.fontsize_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.fontsize_slider.setRange(5, 25)
-        self.fontsize_slider.setValue(12)
-        self.fontsize_slider.setToolTip("Size of the translated text displayed on screen")
-        self.fontsize_slider.valueChanged.connect(self.update_fontsize)
-        font_layout.addWidget(self.fontsize_slider)
+    @staticmethod
+    def _find_to_index(code):
+        for i, (n, c) in enumerate(TO_LANGS):
+            if c == code:
+                return i
+        return 0
 
-        font_group.setLayout(font_layout)
-        p3_layout.addWidget(font_group)
-        p3_layout.addStretch()
-        self.stack.addWidget(page3)
+    @staticmethod
+    def _sanitize_recents(raw):
+        valid_from = {n for n, _ in FROM_LANGS}
+        valid_to = {c for _, c in TO_LANGS}
+        clean = []
+        for entry in raw if isinstance(raw, list) else []:
+            if (isinstance(entry, dict)
+                    and entry.get("from") in valid_from
+                    and entry.get("to") in valid_to):
+                clean.append({"from": entry["from"], "to": entry["to"]})
+        return clean[:MAX_RECENTS]
 
-        # Status bar at bottom
-        status_widget = QtWidgets.QWidget()
-        status_layout = QtWidgets.QHBoxLayout(status_widget)
-        status_layout.setContentsMargins(0, 5, 0, 0)
-        self.status_label = QtWidgets.QLabel("🔴 Flask OCR: starting...")
-        self.status_label.setStyleSheet("color: #f38ba8; font-size: 9pt;")
-        status_layout.addWidget(self.status_label)
-        status_layout.addStretch()
-        self.hotkey_label = QtWidgets.QLabel("Hotkey: Alt+Shift+M")
-        self.hotkey_label.setStyleSheet("color: #6c7086; font-size: 9pt;")
-        status_layout.addWidget(self.hotkey_label)
-
-        outer_layout = QtWidgets.QVBoxLayout()
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(0)
-        content_widget = QtWidgets.QWidget()
-        content_layout = QtWidgets.QHBoxLayout(content_widget)
-        content_layout.setContentsMargins(15, 15, 15, 0)
-        content_layout.setSpacing(15)
-        content_layout.addWidget(sidebar_widget)
-        content_layout.addWidget(self.stack)
-        outer_layout.addWidget(content_widget)
-        outer_layout.addWidget(status_widget)
-        self.setLayout(outer_layout)
-
-        # Remove the old direct layout additions
-        # Connect sidebar navigation
-        btn_ocr.clicked.connect(lambda: self.stack.setCurrentIndex(0))
-        btn_capture.clicked.connect(lambda: self.stack.setCurrentIndex(1))
-        btn_overlay.clicked.connect(lambda: self.stack.setCurrentIndex(2))
-
-    def set_source_language(self, val, btn):
-        if hasattr(self, 'current_src_btn'):
-            self.current_src_btn.setChecked(False)
-        self.current_src_btn = btn
-        btn.setChecked(True)
-        self.source_lang_option = val
-        print(f"Source language option updated: {val}")
+    def _on_from_changed(self, idx):
+        name, opt = FROM_LANGS[idx]
+        option_changed = (opt != self.source_lang_option)
+        self.source_lang_name = name
+        self.source_lang_option = opt
         self.save_settings()
-        self.restart_flask_server()
+        # Languages sharing one model bundle need no server restart.
+        if option_changed:
+            self.restart_flask_server()
+        else:
+            print(f"Source language updated: {name} (same OCR model, no restart)")
+        self._update_swap_state()
 
-    def set_dest_language(self, lang, btn):
-        if hasattr(self, 'current_dest_btn'):
-            self.current_dest_btn.setChecked(False)
-        self.current_dest_btn = btn
-        btn.setChecked(True)
-        self.dest_lang = lang
-        print(f"Destination language updated: {lang}")
+    def _on_to_changed(self, idx):
+        name, code = TO_LANGS[idx]
+        self.dest_lang_name = name
+        self.dest_lang = code
+        print(f"Destination language updated: {name}")
         self.save_settings()
+        self._update_swap_state()
 
-    def pick_color(self):
+    def _update_swap_state(self):
+        ok = _is_swappable(self.source_lang_name, self.dest_lang_name)
+        self.swap_button.setEnabled(ok)
+        if ok:
+            self.swap_button.setToolTip("Swap languages")
+        else:
+            self.swap_button.setToolTip(
+                f"No OCR model for '{self.dest_lang_name}' — can't swap")
+
+    def _swap_languages(self):
+        from_name = self.source_lang_name
+        to_name = TO_LANGS[self.to_combo.currentIndex()][0]
+        if not _is_swappable(from_name, to_name):
+            return
+        new_from = 0
+        for i, (n, _o) in enumerate(FROM_LANGS):
+            if _base_name(n) == _base_name(to_name):
+                new_from = i
+                break
+        new_to = self._find_to_index(
+            next(c for n, c in TO_LANGS
+                 if _base_name(n) == _base_name(from_name)))
+        self.from_combo.setCurrentIndex(new_from)  # fires handler
+        self.to_combo.setCurrentIndex(new_to)      # fires handler
+
+    # ---------- recents ----------
+    def _push_recent(self):
+        entry = {"from": self.source_lang_name, "to": self.dest_lang}
+        self.recent_pairs = [e for e in self.recent_pairs if e != entry]
+        self.recent_pairs.insert(0, entry)
+        self.recent_pairs = self.recent_pairs[:MAX_RECENTS]
+        self.save_settings()
+        self._refresh_recent_chips()
+
+    def _refresh_recent_chips(self):
+        while self.recents_chips.count():
+            item = self.recents_chips.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for entry in self.recent_pairs:
+            from_short = FROM_SHORT[self._find_from_index(entry["from"], 1)]
+            to_short = entry["to"].split("-")[0].upper()
+            chip = QtWidgets.QPushButton(f"{from_short} \u2192 {to_short}")
+            chip.setObjectName("chipButton")
+            chip.setCursor(QtCore.Qt.PointingHandCursor)
+            chip.setToolTip(f"{entry['from']} → "
+                            f"{self._to_display_name(entry['to'])}")
+            chip.clicked.connect(
+                lambda _c, e=dict(entry): self._apply_recent(e))
+            self.recents_chips.addWidget(chip)
+        has = bool(self.recent_pairs)
+        self.recents_wrap.setVisible(has)
+
+    @staticmethod
+    def _to_display_name(code):
+        for n, c in TO_LANGS:
+            if c == code:
+                return n
+        return code
+
+    def _apply_recent(self, entry):
+        self.from_combo.setCurrentIndex(
+            self._find_from_index(entry["from"], self.source_lang_option))
+        self.to_combo.setCurrentIndex(self._find_to_index(entry["to"]))
+
+    # ---------- OCR status pill (live Flask /health) ----------
+    def _set_status(self, state):
+        text, accent = STATUS_STYLE[state]
+        dot = "\u25cc" if state == "starting" else "\u25cf"
+        self.status_button.setText(f"{dot}  {text}")
+        self.status_button.setStyleSheet(
+            f"QPushButton#statusButton {{"
+            f" background-color: #14161d;"
+            f" color: {accent};"
+            f" border: 1px solid {accent};"
+            f" border-radius: 13px;"
+            f" padding: 6px 14px;"
+            f"}}")
+
+    def _on_status_clicked(self):
+        """Manual re-check; restart the server if it is down."""
+        import requests as _requests
+        try:
+            resp = _requests.get("http://localhost:5000/health", timeout=2)
+            if resp.status_code == 200:
+                self._set_status("ready")
+                return
+            self._set_status("starting")
+        except Exception:
+            self._set_status("offline")
+            print("Status check failed — restarting Flask server...")
+            self.restart_flask_server()
+
+    def _poll_flask_health(self):
+        """Poll Flask /health endpoint and reflect it on the status pill."""
+        import requests as _requests
+
+        def check():
+            try:
+                resp = _requests.get("http://localhost:5000/health", timeout=2)
+                if resp.status_code == 200:
+                    self._set_status("ready")
+                else:
+                    self._set_status("starting")
+                    QtCore.QTimer.singleShot(2000, check)
+            except Exception:
+                self._set_status("offline")
+                QtCore.QTimer.singleShot(3000, check)
+        QtCore.QTimer.singleShot(2000, check)
+
+    # ---------- settings dialog (all appearance knobs live here) ----------
+    def open_settings(self):
+        self._build_settings_dialog().exec_()
+
+    def _build_settings_dialog(self):
+        """Build the Settings dialog (split out so tests can inspect it)."""
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Settings")
+        dlg.setMinimumWidth(400)
+        layout = QtWidgets.QVBoxLayout(dlg)
+        layout.setSpacing(6)
+
+        # Capture box group.
+        cap_group = QtWidgets.QGroupBox("Capture box")
+        cap_layout = QtWidgets.QVBoxLayout()
+        fill_row = QtWidgets.QHBoxLayout()
+        fill_row.addWidget(QtWidgets.QLabel("Selection fill:"))
+        self._dlg_fill_swatch = QtWidgets.QFrame()
+        self._dlg_fill_swatch.setObjectName("swatch")
+        self._dlg_fill_swatch.setFixedSize(30, 20)
+        fill_row.addWidget(self._dlg_fill_swatch)
+        fill_btn = QtWidgets.QPushButton("Choose…")
+        fill_btn.clicked.connect(lambda: self._pick_color_in_dlg(
+            "fill", self._dlg_fill_swatch))
+        fill_row.addStretch()
+        fill_row.addWidget(fill_btn)
+        cap_layout.addLayout(fill_row)
+        self._dlg_opacity_lbl = QtWidgets.QLabel()
+        cap_layout.addWidget(self._dlg_opacity_lbl)
+        self._dlg_opacity = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._dlg_opacity.setRange(0, 100)
+        self._dlg_opacity.valueChanged.connect(self._dlg_update_opacity)
+        cap_layout.addWidget(self._dlg_opacity)
+        self._dlg_width_lbl = QtWidgets.QLabel()
+        cap_layout.addWidget(self._dlg_width_lbl)
+        self._dlg_width = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._dlg_width.setRange(1, 10)
+        self._dlg_width.valueChanged.connect(self._dlg_update_width)
+        cap_layout.addWidget(self._dlg_width)
+        cap_group.setLayout(cap_layout)
+        layout.addWidget(cap_group)
+
+        # Overlay text group.
+        txt_group = QtWidgets.QGroupBox("Overlay text")
+        txt_layout = QtWidgets.QVBoxLayout()
+        tc_row = QtWidgets.QHBoxLayout()
+        tc_row.addWidget(QtWidgets.QLabel("Text color:"))
+        self._dlg_text_swatch = QtWidgets.QFrame()
+        self._dlg_text_swatch.setObjectName("swatch")
+        self._dlg_text_swatch.setFixedSize(30, 20)
+        tc_row.addWidget(self._dlg_text_swatch)
+        tc_btn = QtWidgets.QPushButton("Choose…")
+        tc_btn.clicked.connect(lambda: self._pick_color_in_dlg(
+            "text", self._dlg_text_swatch))
+        tc_row.addStretch()
+        tc_row.addWidget(tc_btn)
+        txt_layout.addLayout(tc_row)
+        self._dlg_alpha_lbl = QtWidgets.QLabel()
+        txt_layout.addWidget(self._dlg_alpha_lbl)
+        self._dlg_alpha = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._dlg_alpha.setRange(0, 100)
+        self._dlg_alpha.valueChanged.connect(self._dlg_update_alpha)
+        txt_layout.addWidget(self._dlg_alpha)
+        self._dlg_font_lbl = QtWidgets.QLabel()
+        txt_layout.addWidget(self._dlg_font_lbl)
+        self._dlg_font = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._dlg_font.setRange(5, 25)
+        self._dlg_font.valueChanged.connect(self._dlg_update_font)
+        txt_layout.addWidget(self._dlg_font)
+        txt_group.setLayout(txt_layout)
+        layout.addWidget(txt_group)
+
+        self._refresh_settings_dlg()
+        # Set slider positions without firing save-churn.
+        for slider, val in ((self._dlg_opacity, int(self.opacity * 100)),
+                            (self._dlg_width, self.line_width),
+                            (self._dlg_alpha, int(self.alpha * 100)),
+                            (self._dlg_font, self.font_size)):
+            slider.blockSignals(True)
+            slider.setValue(val)
+            slider.blockSignals(False)
+        self._update_dlg_labels()
+
+        btn_row = QtWidgets.QHBoxLayout()
+        reset_btn = QtWidgets.QPushButton("Reset defaults")
+        reset_btn.setStyleSheet("color: #f38ba8;")
+        reset_btn.clicked.connect(lambda: self._reset_from_dlg(dlg))
+        btn_row.addWidget(reset_btn)
+        btn_row.addStretch()
+        close_btn = QtWidgets.QPushButton("Done")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        return dlg
+
+    def _refresh_settings_dlg(self):
+        self._dlg_fill_swatch.setStyleSheet(
+            f"QFrame#swatch {{ background-color: {self.fill_color}; }}")
+        self._dlg_text_swatch.setStyleSheet(
+            f"QFrame#swatch {{ background-color: {self.text_color}; }}")
+
+    def _update_dlg_labels(self):
+        self._dlg_opacity_lbl.setText(
+            f"Selection opacity: {int(self.opacity * 100)}%")
+        self._dlg_width_lbl.setText(
+            f"Border width: {self.line_width}px")
+        self._dlg_alpha_lbl.setText(
+            f"Overlay background: {int(self.alpha * 100)}%")
+        self._dlg_font_lbl.setText(f"Font size: {self.font_size}pt")
+
+    def _pick_color_in_dlg(self, which, swatch):
         col = QtWidgets.QColorDialog.getColor()
         if col.isValid():
-            self.fill_color = col.name()
-            self.color_btn.setText(f"Pick Color ({self.fill_color})")
+            if which == "fill":
+                self.fill_color = col.name()
+            else:
+                self.text_color = col.name()
+            swatch.setStyleSheet(
+                f"QFrame#swatch {{ background-color: {col.name()}; }}")
             self.save_settings()
 
-    def pick_text_color(self):
-        col = QtWidgets.QColorDialog.getColor()
-        if col.isValid():
-            self.text_color = col.name()
-            self.text_color_btn.setText(f"Pick Text Color ({self.text_color})")
-            self.save_settings()
-
-    def update_opacity(self, val):
+    def _dlg_update_opacity(self, val):
         self.opacity = val / 100.0
+        self._dlg_opacity_lbl.setText(f"Selection opacity: {val}%")
         self.save_settings()
 
-    def update_linewidth(self, val):
+    def _dlg_update_width(self, val):
         self.line_width = val
+        self._dlg_width_lbl.setText(f"Border width: {val}px")
         self.save_settings()
 
-    def update_alpha(self, val):
+    def _dlg_update_alpha(self, val):
         self.alpha = val / 100.0
+        self._dlg_alpha_lbl.setText(f"Overlay background: {val}%")
         self.save_settings()
 
-    def update_fontsize(self, val):
+    def _dlg_update_font(self, val):
         self.font_size = val
+        self._dlg_font_lbl.setText(f"Font size: {val}pt")
         self.save_settings()
 
+    def _reset_from_dlg(self, dlg):
+        self.reset_defaults()
+        self._refresh_settings_dlg()
+        for slider, val in ((self._dlg_opacity, int(self.opacity * 100)),
+                            (self._dlg_width, self.line_width),
+                            (self._dlg_alpha, int(self.alpha * 100)),
+                            (self._dlg_font, self.font_size)):
+            slider.blockSignals(True)
+            slider.setValue(val)
+            slider.blockSignals(False)
+        self._update_dlg_labels()
+        print("Settings reset to defaults (from dialog)")
+
+    # ---------- backend processes ----------
     def start_flask_server(self):
         python_executable = Path(__file__).parent / ".venv" / "Scripts" / "python.exe"
         if not python_executable.exists():
             python_executable = sys.executable
         server_script = Path(__file__).parent / "python" / "ocr_server.py"
-        
+
         cmd = [str(python_executable), str(server_script), str(self.source_lang_option)]
         print(f"Starting Flask server: {' '.join(cmd)}")
         try:
@@ -450,25 +926,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
             self._poll_flask_health()
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to start Flask OCR server: {e}")
-
-    def _poll_flask_health(self):
-        """Poll Flask /health endpoint and update status label."""
-        import requests as _requests
-        def check():
-            try:
-                resp = _requests.get("http://localhost:5000/health", timeout=2)
-                if resp.status_code == 200:
-                    self.status_label.setText("🟢 Flask OCR: ready")
-                    self.status_label.setStyleSheet("color: #a6e3a1; font-size: 9pt;")
-                else:
-                    self.status_label.setText("🟡 Flask OCR: initializing...")
-                    self.status_label.setStyleSheet("color: #f9e2af; font-size: 9pt;")
-                    QtCore.QTimer.singleShot(2000, check)
-            except Exception:
-                self.status_label.setText("🔴 Flask OCR: not running")
-                self.status_label.setStyleSheet("color: #f38ba8; font-size: 9pt;")
-                QtCore.QTimer.singleShot(3000, check)
-        QtCore.QTimer.singleShot(2000, check)
+            self._set_status("offline")
 
     def restart_flask_server(self):
         if self.flask_process:
@@ -478,9 +936,11 @@ class LingoLensControlCenter(QtWidgets.QWidget):
                 self.flask_process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 self.flask_process.kill()
+        self._set_status("starting")
         self.start_flask_server()
 
     def trigger_snip(self):
+        self._push_recent()
         python_executable = Path(__file__).parent / ".venv" / "Scripts" / "python.exe"
         if not python_executable.exists():
             python_executable = sys.executable
@@ -525,6 +985,7 @@ class LingoLensControlCenter(QtWidgets.QWidget):
                 pass
         a0.accept()
 
+
 if sys.platform == 'win32':
     class HotkeyFilter(QtCore.QAbstractNativeEventFilter):
         def __init__(self, callback):
@@ -540,8 +1001,17 @@ if sys.platform == 'win32':
                         return True, 0
             return False, 0
 
+
 if __name__ == "__main__":
+    # Crisp text on scaled displays (pairs with the per-monitor DPI awareness
+    # set at the top of this file, before the Qt import).
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     app = QtWidgets.QApplication(sys.argv)
+    _icon_path = Path(__file__).parent / "icon.png"
+    if _icon_path.exists():
+        app.setWindowIcon(QtGui.QIcon(str(_icon_path)))
+    app.setStyleSheet(LINEAR_QSS)
     window = LingoLensControlCenter()
     window.show()
     sys.exit(app.exec_())
