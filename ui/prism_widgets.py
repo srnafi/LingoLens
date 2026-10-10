@@ -598,9 +598,11 @@ class LangSelector(HoverWidget):
         p.drawPath(path)
         items = self._items()
         badge_txt, name = items[self.index]
-        badge = QRectF(9, (self.height() - 32) / 2, 38, 32)
-        p.fillPath(rounded(badge, 11), Th.c("indigo") if self.align == "right" else Th.c("cyan"))
-        draw_text(p, badge, badge_txt, app_font(8.6, QFont.Bold), Th.c("text"), Qt.AlignCenter)
+        acc = Th.c("indigo") if self.align == "right" else Th.c("cyan")
+        badge = QRectF(8, (self.height() - 42) / 2, 40, 42)
+        p.fillPath(rounded(badge, 13), alpha(acc, 42))
+        draw_text(p, badge, badge_txt, app_font(9.0, QFont.Bold),
+                  mix(acc, Th.c("text"), 0.35), Qt.AlignCenter)
         f = app_font(10, QFont.DemiBold)
         short = name.split(" (")[0]
         txt = QFontMetrics(f).elidedText(short, Qt.ElideRight, int(self.width() - 45 - 14 - 30))
@@ -639,7 +641,7 @@ class SwapButton(HoverWidget):
             ring = alpha(Th.c("glass"), 14)
         p.setPen(QPen(ring, 1.3)); p.drawPath(rounded(r, 23))
         p.rotate(self.rot.val)
-        col = mix(Th.c("soft"), QColor("white"), h) if en else alpha(Th.c("muted"), 120)
+        col = mix(Th.c("soft"), Th.c("text"), h) if en else alpha(Th.c("muted"), 120)
         draw_icon(p, "swap", QRectF(-10, -10, 20, 20), col, 1.9)
 
 
@@ -652,7 +654,7 @@ class Chip(HoverWidget):
         self.f = app_font(8.8, QFont.Bold, 0.4)
         fm = QFontMetrics(self.f)
         self.wa, self.wb = fm.horizontalAdvance(a), fm.horizontalAdvance(b)
-        self.setFixedSize(self.wa + self.wb + 56, 30)
+        self.setFixedSize(self.wa + self.wb + 56, 34)
 
     def set_active(self, v):
         self.active = v; self.update()
@@ -662,7 +664,7 @@ class Chip(HoverWidget):
         p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
         h = self.hover.val
         p.translate(0, -1.0 * h)
-        r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
+        r = QRectF(self.rect()).adjusted(.5, 3.5, -.5, -.5)
         path = rounded(r, r.height() / 2)
         p.fillPath(path, alpha(Th.c("cyan"), 34) if self.active
                    else alpha(Th.c("glass"), int(lerp(11, 22, h))))
@@ -670,15 +672,15 @@ class Chip(HoverWidget):
                       else alpha(Th.c("glass"), int(lerp(24, 60, h))), 1))
         p.drawPath(path)
         col = Th.c("text") if (self.active or h > .3) else Th.c("soft")
+        cy = r.center().y()
         x = 14
-        draw_text(p, QRectF(x, 0, self.wa + 2, self.height()), self.a, self.f, col)
+        draw_text(p, QRectF(x, r.top(), self.wa + 2, r.height()), self.a, self.f, col)
         x += self.wa + 8
         p.setPen(QPen(alpha(col, 200), 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        cy = self.height() / 2
         p.drawLine(QPointF(x, cy), QPointF(x + 10, cy))
         p.drawPolyline(QPolygonF([QPointF(x + 6.5, cy - 3.2), QPointF(x + 10, cy), QPointF(x + 6.5, cy + 3.2)]))
         x += 18
-        draw_text(p, QRectF(x, 0, self.wb + 2, self.height()), self.b, self.f, col)
+        draw_text(p, QRectF(x, r.top(), self.wb + 2, r.height()), self.b, self.f, col)
 
 
 # ==========================================================================
