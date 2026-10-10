@@ -110,8 +110,7 @@ FAMILIES = ["Inter", "Segoe UI Variable Display", "Segoe UI", "SF Pro Display",
 SHADOW = 0
 RADIUS = 26
 WIN_W = 480
-# No WIN_H: the window hugs MainPage's sizeHint (see _hug()); the
-# SettingsPage scrolls, so it fits whatever height the main page needs.
+# No WIN_H: the window hugs each page's sizeHint (see _hug()).
 
 
 def app_font(pt, weight=QFont.Normal, spacing=0.0):

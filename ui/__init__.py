@@ -4,7 +4,7 @@ Layout of the main window (action only, no marketing copy):
 
     [logo/engine-status LingoLens]  [theme]  [settings]  [–]  [×]
     [      Snip & Translate  ·  Alt+Shift+M      ]
-    [ FROM ▾ ]  [swap]  [ TO ▾ ]
+    [ src ▾ ]  [swap]  [ dst ▾ ]
     [ chips ]              <- hidden when empty
 
 NOTE: this module must stay Qt-free. ``app.py`` calls
