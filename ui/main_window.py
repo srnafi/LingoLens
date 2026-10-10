@@ -4,8 +4,8 @@ One :class:`GlassWindow` (custom-painted glass body, ambient glows,
 full-body drag) + a :class:`QStackedWidget` with two pages:
 
 - :class:`MainPage` — hero snip button, From/To language selectors,
-  recent-pair chips, live OCR status.
-- :class:`SettingsPage` — theme picker, live style preview, capture-box
+  recent-pair chips, engine status in the logo.
+- :class:`SettingsPage` — live capture-box preview and capture-box
   knobs, all writing straight into ``SettingsStore``.
 
 The window owns no domain state: languages from ``ui.languages``,
@@ -18,20 +18,20 @@ import time
 
 from PyQt5.QtCore import (QEasingCurve, QPointF, Qt, QPropertyAnimation,
                           QRectF, QVariantAnimation, QTimer, pyqtSignal)
-from PyQt5.QtGui import QKeySequence, QPixmap
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (QApplication, QGraphicsOpacityEffect,
-                             QHBoxLayout, QLabel, QScrollArea, QShortcut,
+                             QHBoxLayout, QLabel, QShortcut,
                              QStackedWidget, QVBoxLayout, QWidget)
 
 from ui import ROOT, languages
 from ui.backend import Backend, register_hotkey, unregister_hotkey
 from ui.settings_store import SettingsStore
 from ui.theme import (PALETTES, RADIUS, SHADOW, THEME_ORDER, WIN_W,
-                      Th, alpha, app_font, mix, rounded)
+                      Th, alpha, rounded)
 from ui.prism_widgets import (Card, Chip, ColorRow, HeroButton, IconButton,
-                              LangSelector, OverlayPreview, PillButton,
-                              SliderRow, StatusPill, SwapButton,
-                              ThemePicker, Toast, Wordmark, make_label)
+                              LangSelector, LogoStatus, OverlayPreview, PillButton,
+                              SliderRow, SwapButton,
+                              Toast, Wordmark, make_label)
 from PyQt5.QtGui import QBrush as _QBrush
 from PyQt5.QtGui import QLinearGradient as _QLinearGradient
 from PyQt5.QtGui import QPen as _QPen
@@ -40,21 +40,7 @@ from PyQt5.QtGui import QPainter as _QPainter
 from PyQt5.QtGui import QColor as _QColor
 from PyQt5.QtGui import QFont as _QFont
 
-HEALTH = {  # backend state -> (pill text, palette key)
-    "ready": ("Ready", "green"),
-    "starting": ("Starting", "amber"),
-    "offline": ("Offline", "rose"),
-}
-
 ENGINE_LINE = "EasyOCR + OpenVINO · on-device OCR"
-
-
-def _caption(text):
-    lb = make_label(text.upper(), 9, _QFont.DemiBold, "muted")
-    f = lb.font()
-    f.setLetterSpacing(_QFont.AbsoluteSpacing, 1.2)
-    lb.setFont(f)
-    return lb
 
 
 # ==========================================================================
@@ -71,17 +57,14 @@ class GlassWindow(QWidget):
         self._inner_w = inner_w
         self.set_inner_size(inner_w, inner_h)
         self._drag_off = None
-        self._shadow = None
-        self._shadow_dpr = 0
         self._t0 = time.monotonic()
         self._clock = QTimer(self, interval=self.AMBIENT_MS)
         self._clock.timeout.connect(self._tick)
         self._clock.start()
 
     def set_inner_size(self, w, h):
-        """Resize the window around a w×h content body (shadow margin added)."""
-        self.setFixedSize(w + 2 * SHADOW, h + 2 * SHADOW)
-        self._shadow = None  # shadow pixmap keys off window size; rebuild
+        """Resize the window around a w×h content body."""
+        self.setFixedSize(w, h)
 
     def body_rect(self):
         return QRectF(self.rect()).adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
@@ -108,29 +91,11 @@ class GlassWindow(QWidget):
                 self._clock.start()
         super().changeEvent(e)
 
-    # -- shadow (pre-rendered once per DPR) ---------------------------------
-    def _build_shadow(self):
-        dpr = self.devicePixelRatioF()
-        pm = QPixmap(int(self.width() * dpr), int(self.height() * dpr))
-        pm.setDevicePixelRatio(dpr)
-        pm.fill(Qt.transparent)
-        p = _QPainter(pm)
-        p.setRenderHint(_QPainter.Antialiasing)
-        body = self.body_rect()
-        for i in range(20, 0, -1):
-            grow = i * (SHADOW - 10) / 20
-            r = body.adjusted(-grow, -grow + 9, grow, grow + 9)
-            p.fillPath(rounded(r, RADIUS + grow), _QColor(2, 3, 12, 6))
-        p.end()
-        self._shadow, self._shadow_dpr = pm, dpr
-
+    # -- painted body ------------------------------------------------------
     def paintEvent(self, e):
-        if self._shadow is None or self._shadow_dpr != self.devicePixelRatioF():
-            self._build_shadow()
         p = _QPainter(self)
         p.setRenderHints(_QPainter.Antialiasing | _QPainter.SmoothPixmapTransform
                          | _QPainter.TextAntialiasing)
-        p.drawPixmap(0, 0, self._shadow)
 
         body = self.body_rect()
         path = rounded(body, RADIUS)
@@ -194,18 +159,9 @@ class MainPage(QWidget):
         # ---- header ------------------------------------------------------
         bar = QHBoxLayout()
         bar.setSpacing(4)
-        logo_file = ROOT / "logo.png"
-        if logo_file.exists():
-            pm = QPixmap(str(logo_file)).scaled(
-                36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            logo_lbl = QLabel()
-            logo_lbl.setPixmap(pm)
-            logo_lbl.setFixedSize(36, 36)
-            bar.addWidget(logo_lbl)
+        self.logo = LogoStatus()
+        bar.addWidget(self.logo)
         bar.addWidget(Wordmark())
-        self.pill = StatusPill("Starting", "amber")
-        self.pill.setToolTip("OCR engine status - click to re-check / restart")
-        bar.addWidget(self.pill)
         bar.addStretch(1)
         self.btn_theme = IconButton("sun", 30, tip="Cycle theme")
         self.btn_settings = IconButton("gear", 30, tip="Settings")
@@ -224,40 +180,27 @@ class MainPage(QWidget):
         # ---- language pair ----------------------------------------------
         row = QHBoxLayout()
         row.setSpacing(10)
-        colL, colR = QVBoxLayout(), QVBoxLayout()
-        colL.setSpacing(7)
-        colR.setSpacing(7)
-        colL.addWidget(_caption("From"))
         self.src = LangSelector(
             rows=languages.FROM_LANGS,
             badge_of=lambda i, r: languages.FROM_SHORT[i],
             label_of=lambda i, r: r[0],
             index=0, align="left")
-        colL.addWidget(self.src)
-        colR.addWidget(_caption("To"))
         self.dst = LangSelector(
             rows=languages.TO_LANGS,
             badge_of=lambda i, r: r[1].split("-")[0].upper(),
             label_of=lambda i, r: r[0],
             index=0, align="right")
-        colR.addWidget(self.dst)
         self.swap = SwapButton()
-        mid = QVBoxLayout()
-        mid.setSpacing(7)
-        spacer = _caption("From")  # invisible alignment row
-        spacer.setStyleSheet("color: transparent; background: transparent;")
-        mid.addWidget(spacer)
-        mid.addWidget(self.swap)
-        mid.addStretch(1)
-        row.addLayout(colL, 1)
-        row.addLayout(mid)
-        row.addLayout(colR, 1)
+        row.addWidget(self.src, 1)
+        row.addWidget(self.swap, 0, Qt.AlignVCenter)
+        row.addWidget(self.dst, 1)
         lay.addLayout(row)
         lay.addSpacing(14)
 
         # ---- recent pairs --------------------------------------------------
         self.chips_row = QHBoxLayout()
         self.chips_row.setSpacing(8)
+        self.chips_row.setContentsMargins(0, 0, 0, 0)
         self.recents_wrap = QWidget()
         self.recents_wrap.setLayout(self.chips_row)
         lay.addWidget(self.recents_wrap)
@@ -274,7 +217,7 @@ class MainPage(QWidget):
         self.dst.changed.connect(self._on_to_changed)
         self.swap.clicked.connect(self._swap_languages)
         self.hero.clicked.connect(self.win.trigger_snip)
-        self.pill.clicked.connect(self.win.on_status_clicked)
+        self.logo.clicked.connect(self.win.on_status_clicked)
         self.btn_theme.clicked.connect(self._cycle_theme)
         self.btn_settings.clicked.connect(lambda: self.win.goto(1))
         self.btn_min.clicked.connect(self.win.showMinimized)
@@ -366,8 +309,6 @@ class MainPage(QWidget):
                 item.widget().deleteLater()
         pairs = self.win.store.settings.recent_pairs
         if pairs:
-            self.chips_row.addWidget(_caption("Recent"))
-            self.chips_row.addSpacing(4)
             s = self.win.store.settings
             for entry in pairs:
                 from_short = languages.FROM_SHORT[
@@ -406,11 +347,10 @@ class MainPage(QWidget):
 
 
 # ==========================================================================
-#  Settings page (in-window; scrolls so it can never clip)
+#  Settings page (in-window; hugs its content via _hug())
 # ==========================================================================
 class SettingsPage(QWidget):
     back = pyqtSignal()
-    theme_picked = pyqtSignal(str)
 
     FILL_PRESETS = ["#6366F1", "#22D3EE", "#34D399", "#FBBF24", "#FB7185"]
 
@@ -431,35 +371,9 @@ class SettingsPage(QWidget):
         lay.addLayout(head)
         lay.addSpacing(10)
 
-        # ---- scrollable content -----------------------------------------
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { background: transparent; width: 8px; margin: 4px 1px; }"
-            "QScrollBar::handle:vertical { background: rgba(128,128,128,110); border-radius: 3px; min-height: 28px; }"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }")
-        scroll.viewport().setAutoFillBackground(False)
-        content = QWidget()
-        cl = QVBoxLayout(content)
-        cl.setContentsMargins(0, 0, 4, 0)
-        cl.setSpacing(10)
-
-        c0 = Card(20)
-        l0 = QVBoxLayout(c0)
-        l0.setContentsMargins(16, 12, 16, 12)
-        l0.setSpacing(6)
-        l0.addWidget(make_label("Appearance", 9.5, _QFont.DemiBold, "soft"))
-        self.picker = ThemePicker(self.win.theme_name)
-        self.picker.picked.connect(self.theme_picked)
-        l0.addWidget(self.picker)
-        cl.addWidget(c0)
-
         self.preview = OverlayPreview(self.pst)
-        cl.addWidget(self.preview)
+        lay.addWidget(self.preview)
+        lay.addSpacing(10)
 
         c1 = Card(20)
         l1 = QVBoxLayout(c1)
@@ -472,13 +386,8 @@ class SettingsPage(QWidget):
         self.r_bw = SliderRow("Border width", 1, 10, s.line_width, " px")
         for w in (self.r_fill, self.r_fop, self.r_bw):
             l1.addWidget(w)
-        cl.addWidget(c1)
-        cl.addStretch(1)
-        scroll.setWidget(content)
-        # AFTER setWidget: QScrollArea re-enables autoFill on the scrolled
-        # widget, which Fusion fills with Window #f0f0f0 (white panel bug).
-        content.setAutoFillBackground(False)
-        lay.addWidget(scroll, 1)
+        lay.addWidget(c1)
+        lay.addStretch(1)
         lay.addSpacing(10)
 
         foot = QHBoxLayout()
@@ -522,7 +431,6 @@ class SettingsPage(QWidget):
 
     def _refresh_from_store(self):
         s = self.win.store.settings
-        self.picker.set_current(s.theme)
         self.r_fill.set_color(s.fill_color)
         self.r_fop.setValue(int(s.opacity * 100))
         self.r_bw.setValue(s.line_width)
@@ -565,7 +473,6 @@ class LingoLensControlCenter(GlassWindow):
         self._hug()  # drop the ~370px dead space the old fixed 740px left
 
         self.settings.back.connect(lambda: self.goto(0))
-        self.settings.theme_picked.connect(self.set_theme)
         QShortcut(QKeySequence("Alt+Shift+M"), self,
                   activated=self.trigger_snip)
 
@@ -577,9 +484,10 @@ class LingoLensControlCenter(GlassWindow):
 
     # ------------------------------------------------------------------ pages
     def _hug(self):
-        """Size the window to the current page; recents chips grow it."""
-        self.main.layout().activate()
-        hint = max(1, self.stack.currentWidget().sizeHint().height())
+        """Size the window to the current page's content height."""
+        page = self.stack.currentWidget()
+        page.layout().activate()
+        hint = max(1, page.sizeHint().height())
         self.set_inner_size(WIN_W, hint)
 
     def goto(self, idx):
@@ -590,8 +498,7 @@ class LingoLensControlCenter(GlassWindow):
         fx.setOpacity(0.0)
         page.setGraphicsEffect(fx)
         self.stack.setCurrentIndex(idx)
-        if idx == 0:
-            self._hug()  # settings page scrolls inside the main-page height
+        self._hug()
         a = QPropertyAnimation(fx, b"opacity", self)
         a.setDuration(260)
         a.setStartValue(0.0)
@@ -626,7 +533,6 @@ class LingoLensControlCenter(GlassWindow):
         a.finished.connect(self._refresh_labels)
         a.start()
         self._theme_anim = a
-        self.settings.picker.set_current(name)
         self.main.refresh_theme_icon()
 
     def _refresh_labels(self):
@@ -643,13 +549,12 @@ class LingoLensControlCenter(GlassWindow):
     # ------------------------------------------------------------------ status
     def _set_status(self, state):
         if state == self._last_status:
-            return  # repeated same-state poll: skip the pill entirely
+            return  # repeated same-state poll: skip the logo entirely
         self._last_status = state
         main = getattr(self, "main", None)
         if main is None:
             return  # backend can report synchronously before MainPage exists
-        text, key = HEALTH.get(state, HEALTH["starting"])
-        main.pill.set_state(text, key)
+        main.logo.set_state(state)
 
     def on_status_clicked(self):
         """Manual re-check; restart the server if it is down."""

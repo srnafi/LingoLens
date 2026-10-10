@@ -2,10 +2,10 @@
 
 Layout of the main window (action only, no marketing copy):
 
-    [icon LingoLens]  [OCR status pill]  [settings]  [–]  [×]
+    [logo/engine-status LingoLens]  [theme]  [settings]  [–]  [×]
     [      Snip & Translate  ·  Alt+Shift+M      ]
     [ FROM ▾ ]  [swap]  [ TO ▾ ]
-    [ RECENT: chips ]              <- hidden when empty
+    [ chips ]              <- hidden when empty
 
 NOTE: this module must stay Qt-free. ``app.py`` calls
 :func:`ui.dpi.ensure_dpi_awareness` BEFORE any PyQt5 import — importing

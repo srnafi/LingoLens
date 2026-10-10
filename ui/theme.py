@@ -107,7 +107,7 @@ Th = Theme()
 
 FAMILIES = ["Inter", "Segoe UI Variable Display", "Segoe UI", "SF Pro Display",
             "Helvetica Neue", "Arial"]
-SHADOW = 30
+SHADOW = 0
 RADIUS = 26
 WIN_W = 480
 # No WIN_H: the window hugs MainPage's sizeHint (see _hug()); the

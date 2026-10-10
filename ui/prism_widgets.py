@@ -13,14 +13,14 @@ from PyQt5.QtCore import (QEasingCurve, QPoint, QPointF,
                           pyqtSignal)
 from PyQt5.QtGui import (QBrush, QColor, QConicalGradient, QFont, QFontMetrics,
                          QLinearGradient, QPainter, QPainterPath, QPen,
-                         QPolygonF, QRadialGradient)
+                         QPixmap, QPolygonF, QRadialGradient)
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QColorDialog,
                              QFrame, QGraphicsOpacityEffect, QHBoxLayout,
                              QListWidget, QListWidgetItem, QStyle,
-                             QStyledItemDelegate, QVBoxLayout, QWidget)
+                             QStyledItemDelegate, QWidget)
 
-from ui.theme import (PALETTES, THEME_LABELS, THEME_ORDER, Th, alpha,
-                      app_font, css, draw_text, lerp, mix, rounded)
+from ui import ROOT
+from ui.theme import (Th, alpha, app_font, css, draw_text, lerp, mix, rounded)
 
 
 # ==========================================================================
@@ -226,42 +226,69 @@ class Wordmark(QWidget):
         p.fillPath(b, QBrush(g))
 
 
-class StatusPill(QWidget):
-    """Pulsing status pill; takes a palette KEY, so it morphs with the theme.
+class LogoStatus(QWidget):
+    """App logo carrying the OCR-engine status dot.
 
-    Clickable: the window wires ``clicked`` to the backend health re-check.
+    Not ready: logo static, dot grey. Ready: logo spins, dot lit green.
     """
 
     clicked = pyqtSignal()
 
-    def __init__(self, text, key="green"):
+    def __init__(self, size=36):
         super().__init__()
-        self.text, self.key = text, key
-        self.font_ = app_font(8.4, QFont.DemiBold)
+        self.setFixedSize(size, size)
         self.setCursor(Qt.PointingHandCursor)
-        self._pulse = 0.0
-        self._flash_k = 0.0  # one-shot state-change flash, tweens 1 -> 0
-        self.flash = Tween(self, 0.0, 450)
-        self.flash.valueChanged.connect(self._on_flash)
-        a = QVariantAnimation(self, duration=1700, loopCount=-1)
-        a.setStartValue(0.0); a.setEndValue(1.0)
-        a.valueChanged.connect(lambda v: (setattr(self, "_pulse", v), self.update()))
-        a.start()
-        self._fit()
+        self._pm = QPixmap(str(ROOT / "logo.png")).scaled(
+            32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.state, self._angle, self._halo = "starting", 0.0, 0.0
+        self._spin = QVariantAnimation(self, duration=2400, loopCount=-1)
+        self._spin.setStartValue(0.0)
+        self._spin.setEndValue(360.0)
+        self._spin.setEasingCurve(QEasingCurve.Linear)
+        self._spin.valueChanged.connect(self._on_spin)
+        self._pulse = QVariantAnimation(self, duration=1500, loopCount=-1)
+        self._pulse.setStartValue(0.0)
+        self._pulse.setEndValue(1.0)
+        self._pulse.valueChanged.connect(self._on_pulse)
+        self._apply("starting")
 
-    def _fit(self):
-        self.setFixedSize(QFontMetrics(self.font_).horizontalAdvance(self.text) + 36, 28)
+    def _on_spin(self, v):
+        self._angle = float(v)
+        self.update()
 
-    def _on_flash(self, v):
-        self._flash_k = float(v)
+    def _on_pulse(self, v):
+        self._halo = float(v)
+        self.update()
 
-    def set_state(self, text, key):
-        if text == self.text and key == self.key:
-            return  # repeated same-state poll: no flash, no resize churn
-        self.text, self.key = text, key
-        self._fit()
-        self.flash.val = 1.0  # single ease-out tween 1 -> 0 (no self-cancel)
-        self.flash.go(0.0)
+    def set_state(self, s):
+        if s != self.state:
+            self.state = s
+            self._apply(s)
+
+    def _apply(self, s):
+        if s == "ready":
+            self._spin.start()
+            self._pulse.start()
+            self.setToolTip("Engine ready")
+        else:
+            self._spin.stop()
+            self._angle = 0.0
+            self._pulse.stop()
+            self._halo = 0.0
+            self.setToolTip("Engine starting…" if s == "starting"
+                            else "Engine offline — click to retry")
+        self.update()
+
+    def showEvent(self, e):
+        if self.state == "ready":
+            self._spin.start()
+            self._pulse.start()
+        super().showEvent(e)
+
+    def hideEvent(self, e):
+        self._spin.stop()
+        self._pulse.stop()
+        super().hideEvent(e)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -269,27 +296,26 @@ class StatusPill(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
-        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
-        col = Th.c(self.key)
-        r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
-        path = rounded(r, r.height() / 2)
-        fk = max(0.0, min(1.0, self._flash_k))
-        if fk > 0.003:  # one-shot state-change halo, eases out with the tween
-            halo = rounded(r.adjusted(-2.5 * fk, -2.5 * fk, 2.5 * fk, 2.5 * fk),
-                           r.height() / 2 + 2.5 * fk)
-            p.setPen(QPen(alpha(col, 120 * fk), 1.5))
-            p.drawPath(halo)
-            p.fillPath(path, alpha(col, 26 + 70 * fk))
-        else:
-            p.fillPath(path, alpha(col, 26))
-        p.setPen(QPen(alpha(col, 85), 1)); p.drawPath(path)
-        c = QPointF(15, r.center().y())
+        p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        c = QPointF(self.width() / 2, self.height() / 2)
+        p.save()
+        p.translate(c)
+        p.rotate(self._angle)
+        p.drawPixmap(QPointF(-16, -16), self._pm)
+        p.restore()
+        col = Th.c("green") if self.state == "ready" else Th.c("muted")
+        if self.state == "ready":
+            g = QRadialGradient(c, 10)
+            g.setColorAt(0, alpha(col, 90 + 90 * self._halo))
+            g.setColorAt(1, alpha(col, 0))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(g))
+            p.drawEllipse(c, 10, 10)
         p.setPen(Qt.NoPen)
-        p.setBrush(alpha(col, 110 * (1 - self._pulse)))
-        p.drawEllipse(c, 3.5 + 5 * self._pulse, 3.5 + 5 * self._pulse)
-        p.setBrush(col); p.drawEllipse(c, 3.5, 3.5)
-        draw_text(p, QRectF(26, 0, self.width() - 26, self.height()), self.text,
-                  self.font_, mix(col, QColor("white"), .55))
+        p.setBrush(alpha(Th.c("bg_a"), 235))
+        p.drawEllipse(c, 5.5, 5.5)
+        p.setBrush(col)
+        p.drawEllipse(c, 3.4, 3.4)
 
 
 class Card(QWidget):
@@ -537,10 +563,6 @@ class LangPopup(QWidget):
         p = QPainter(self)
         p.setRenderHints(QPainter.Antialiasing)
         body = QRectF(self.rect()).adjusted(POP_PAD, POP_PAD, -POP_PAD, -POP_PAD)
-        for i in range(10, 0, -1):
-            grow = i * (POP_PAD - 4) / 10
-            p.fillPath(rounded(body.adjusted(-grow, -grow + 6, grow, grow + 6), POP_RADIUS + grow),
-                       QColor(2, 3, 12, 14))
         path = rounded(body, POP_RADIUS)
         g = QLinearGradient(body.topLeft(), body.bottomRight())
         g.setColorAt(0, mix(Th.c("bg_a"), Th.c("glass"), .05))
@@ -932,70 +954,6 @@ class ColorRow(QWidget):
     def set_color(self, c):
         self.sw.set_color(c)
         self.hex.setText(QColor(c).name().upper())
-
-
-class ThemePicker(QWidget):
-    picked = pyqtSignal(str)
-
-    def __init__(self, current, parent=None):
-        super().__init__(parent)
-        self.current = current
-        self.setFixedHeight(56)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setMouseTracking(True)
-        self.hover_i = -1
-
-    def set_current(self, name):
-        self.current = name; self.update()
-
-    def _cell_w(self):
-        return self.width() / max(1, len(THEME_ORDER))
-
-    def _idx(self, x):
-        cw = self._cell_w()
-        if cw <= 0:
-            return 0
-        return max(0, min(len(THEME_ORDER) - 1, int(x / cw)))
-
-    def mouseMoveEvent(self, e):
-        i = self._idx(e.x())
-        if i != self.hover_i:
-            self.hover_i = i; self.update()
-
-    def leaveEvent(self, e):
-        self.hover_i = -1; self.update()
-
-    def mousePressEvent(self, e):
-        if e.button() != Qt.LeftButton:
-            return
-        name = THEME_ORDER[self._idx(e.x())]
-        if name != self.current:
-            self.current = name
-            self.picked.emit(name)
-            self.update()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
-        cw = self._cell_w()
-        for i, name in enumerate(THEME_ORDER):
-            pal = PALETTES[name]
-            cell = QRectF(i * cw, 0, cw, self.height())
-            ring = QRectF(0, 0, 36, 36)
-            ring.moveCenter(QPointF(cell.center().x(), 20))
-            g = QLinearGradient(ring.topLeft(), ring.bottomRight())
-            g.setColorAt(0, pal.cyan); g.setColorAt(.5, pal.indigo); g.setColorAt(1, pal.fuchsia)
-            p.setPen(Qt.NoPen); p.setBrush(QBrush(g)); p.drawEllipse(ring)
-            p.setBrush(pal.bg_a); p.drawEllipse(ring.center(), 8, 8)
-            sel = name == self.current
-            if sel:
-                p.setBrush(Qt.NoBrush); p.setPen(QPen(Th.c("text"), 1.8)); p.drawEllipse(ring.adjusted(-3, -3, 3, 3))
-            elif i == self.hover_i:
-                p.setBrush(Qt.NoBrush); p.setPen(QPen(alpha(Th.c("text"), 120), 1.4))
-                p.drawEllipse(ring.adjusted(-3, -3, 3, 3))
-            draw_text(p, QRectF(cell.left(), 40, cell.width(), 16), THEME_LABELS[name],
-                      app_font(8.6, QFont.DemiBold), Th.c("text") if sel else Th.c("muted"),
-                      Qt.AlignHCenter | Qt.AlignVCenter)
 
 
 class OverlayPreview(QWidget):
