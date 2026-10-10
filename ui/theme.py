@@ -5,10 +5,9 @@ morphing singleton. Every painted widget reads its colours through
 ``Th.c(key)`` at paint time, so a theme change cross-fades the whole
 window with one animation — no stylesheets to swap.
 
-Key set (every palette must define all of these): ``bg_a``, ``bg_b``
-(kept equal so residual uses stay flat), ``text``, ``soft``, ``muted``,
-``cyan``, ``indigo``, ``fuchsia``, ``green``, ``amber``, ``rose``,
-``edge``, ``glass``, ``card_a``, ``card_edge_a``.
+Key set (every palette must define all of these): ``bg_a``, ``text``,
+``soft``, ``muted``, ``cyan``, ``indigo``, ``fuchsia``, ``green``,
+``amber``, ``rose``, ``edge``, ``glass``, ``card_a``, ``card_edge_a``.
 """
 
 from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainterPath
@@ -29,7 +28,7 @@ class Palette:
 
 PALETTES = {
     "aurora": Palette(
-        bg_a=C("#0E1230"), bg_b=C("#0E1230"),
+        bg_a=C("#0E1230"),
         text=C("#F4F6FF"), soft=C("#C5CBE8"), muted=C("#7F88B0"),
         cyan=C("#22D3EE"), indigo=C("#6366F1"), fuchsia=C("#D946EF"),
         green=C("#34D399"), amber=C("#FBBF24"), rose=C("#FB7185"),
@@ -37,7 +36,7 @@ PALETTES = {
         card_a=C("#FFFFFF", 17),
         card_edge_a=C("#FFFFFF", 46)),
     "day": Palette(
-        bg_a=C("#F8F9FD"), bg_b=C("#F8F9FD"),
+        bg_a=C("#F8F9FD"),
         text=C("#131726"), soft=C("#3B4256"), muted=C("#7A839B"),
         cyan=C("#0EA5E9"), indigo=C("#4F46E5"), fuchsia=C("#C026D3"),
         green=C("#0FA97A"), amber=C("#C77D0A"), rose=C("#E11D48"),

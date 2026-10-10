@@ -11,7 +11,7 @@ from PyQt5.QtCore import (QEasingCurve, QPoint, QPointF,
                           QParallelAnimationGroup, QPropertyAnimation, QRectF,
                           QSize, Qt, QTimer, QVariantAnimation,
                           pyqtSignal)
-from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetrics,
+from PyQt5.QtGui import (QColor, QFont, QFontMetrics,
                          QPainter, QPainterPath, QPen,
                          QPolygonF)
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QColorDialog,
