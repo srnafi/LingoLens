@@ -1,6 +1,6 @@
 """Prism theme — palettes, runtime morph, paint helpers.
 
-Three palettes (Aurora/Dusk/Daylight); :data:`Th` is the process-wide
+Two palettes (Dark/Light); :data:`Th` is the process-wide
 morphing singleton. Every painted widget reads its colours through
 ``Th.c(key)`` at paint time, so a theme change cross-fades the whole
 window with one animation — no stylesheets to swap.
@@ -36,14 +36,6 @@ PALETTES = {
         edge=C("#FFFFFF"), glass=C("#FFFFFF"), glow=1.0,
         card_a=C("#FFFFFF", 17), card_b=C("#FFFFFF", 6),
         card_edge_a=C("#FFFFFF", 46), card_edge_b=C("#FFFFFF", 10)),
-    "dusk": Palette(
-        bg_a=C("#1B1035"), bg_b=C("#0B0716"),
-        text=C("#F6F1FF"), soft=C("#CBBFE0"), muted=C("#8B7FA8"),
-        cyan=C("#A78BFA"), indigo=C("#7C3AED"), fuchsia=C("#FB7185"),
-        green=C("#34D399"), amber=C("#FBBF24"), rose=C("#FB7185"),
-        edge=C("#FFFFFF"), glass=C("#FFFFFF"), glow=1.0,
-        card_a=C("#FFFFFF", 17), card_b=C("#FFFFFF", 6),
-        card_edge_a=C("#FFFFFF", 46), card_edge_b=C("#FFFFFF", 10)),
     "day": Palette(
         bg_a=C("#F8F9FD"), bg_b=C("#E7EAF6"),
         text=C("#131726"), soft=C("#3B4256"), muted=C("#7A839B"),
@@ -54,8 +46,8 @@ PALETTES = {
         card_edge_a=C("#0B1020", 28), card_edge_b=C("#0B1020", 10)),
 }
 
-THEME_ORDER = ["aurora", "dusk", "day"]
-THEME_LABELS = {"aurora": "Aurora", "dusk": "Dusk", "day": "Daylight"}
+THEME_ORDER = ["aurora", "day"]
+THEME_LABELS = {"aurora": "Dark", "day": "Light"}
 
 
 def alpha(c, a):
@@ -117,7 +109,7 @@ FAMILIES = ["Inter", "Segoe UI Variable Display", "Segoe UI", "SF Pro Display",
             "Helvetica Neue", "Arial"]
 SHADOW = 30
 RADIUS = 26
-WIN_W = 440
+WIN_W = 480
 # No WIN_H: the window hugs MainPage's sizeHint (see _hug()); the
 # SettingsPage scrolls, so it fits whatever height the main page needs.
 

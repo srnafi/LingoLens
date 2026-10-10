@@ -3,10 +3,10 @@
 One :class:`GlassWindow` (custom-painted glass body, ambient glows,
 full-body drag) + a :class:`QStackedWidget` with two pages:
 
-- :class:`MainPage` — hero snip button, gated capture-mode switch,
-  From/To language selectors, recent-pair chips, live OCR status.
+- :class:`MainPage` — hero snip button, From/To language selectors,
+  recent-pair chips, live OCR status.
 - :class:`SettingsPage` — theme picker, live style preview, capture-box
-  and overlay-text knobs, all writing straight into ``SettingsStore``.
+  knobs, all writing straight into ``SettingsStore``.
 
 The window owns no domain state: languages from ``ui.languages``,
 prefs from ``SettingsStore``, processes from ``Backend``.
@@ -30,7 +30,7 @@ from ui.theme import (PALETTES, RADIUS, SHADOW, THEME_ORDER, WIN_W,
                       Th, alpha, app_font, mix, rounded)
 from ui.prism_widgets import (Card, Chip, ColorRow, HeroButton, IconButton,
                               LangSelector, OverlayPreview, PillButton,
-                              Segmented, SliderRow, StatusPill, SwapButton,
+                              SliderRow, StatusPill, SwapButton,
                               ThemePicker, Toast, Wordmark, make_label)
 from PyQt5.QtGui import QBrush as _QBrush
 from PyQt5.QtGui import QLinearGradient as _QLinearGradient
@@ -41,16 +41,12 @@ from PyQt5.QtGui import QColor as _QColor
 from PyQt5.QtGui import QFont as _QFont
 
 HEALTH = {  # backend state -> (pill text, palette key)
-    "ready": ("OCR ready", "green"),
-    "starting": ("OCR starting", "amber"),
-    "offline": ("OCR offline - retry", "rose"),
+    "ready": ("Ready", "green"),
+    "starting": ("Starting", "amber"),
+    "offline": ("Offline", "rose"),
 }
 
 ENGINE_LINE = "EasyOCR + OpenVINO · on-device OCR"
-
-# Capture modes beyond region need capture.py support (window/screen
-# grab argv) that does not exist yet — they stay visible but gated.
-MODE_REASON = "Window / full-screen capture is not wired yet - region only"
 
 
 def _caption(text):
@@ -207,15 +203,14 @@ class MainPage(QWidget):
             logo_lbl.setFixedSize(36, 36)
             bar.addWidget(logo_lbl)
         bar.addWidget(Wordmark())
-        bar.addSpacing(8)
-        self.pill = StatusPill("OCR starting", "amber")
+        self.pill = StatusPill("Starting", "amber")
         self.pill.setToolTip("OCR engine status - click to re-check / restart")
         bar.addWidget(self.pill)
         bar.addStretch(1)
-        self.btn_theme = IconButton("sun", 32, tip="Cycle theme")
-        self.btn_settings = IconButton("gear", 32, tip="Settings")
-        self.btn_min = IconButton("minimize", 32, tip="Minimize")
-        self.btn_close = IconButton("close", 32, danger=True, tip="Close")
+        self.btn_theme = IconButton("sun", 30, tip="Cycle theme")
+        self.btn_settings = IconButton("gear", 30, tip="Settings")
+        self.btn_min = IconButton("minimize", 30, tip="Minimize")
+        self.btn_close = IconButton("close", 30, danger=True, tip="Close")
         for b in (self.btn_theme, self.btn_settings, self.btn_min, self.btn_close):
             bar.addWidget(b)
         lay.addLayout(bar)
@@ -225,14 +220,6 @@ class MainPage(QWidget):
         self.hero = HeroButton()
         lay.addWidget(self.hero)
         lay.addSpacing(12)
-
-        # ---- capture mode (region live; rest gated, no backend yet) ------
-        self.mode = Segmented([("region", "Region"), ("window", "Window"),
-                               ("monitor", "Screen")])
-        self.mode.set_option_enabled(1, False, MODE_REASON)
-        self.mode.set_option_enabled(2, False, MODE_REASON)
-        lay.addWidget(self.mode)
-        lay.addSpacing(14)
 
         # ---- language pair ----------------------------------------------
         row = QHBoxLayout()
@@ -292,8 +279,6 @@ class MainPage(QWidget):
         self.btn_settings.clicked.connect(lambda: self.win.goto(1))
         self.btn_min.clicked.connect(self.win.showMinimized)
         self.btn_close.clicked.connect(self.win.close)
-        self.mode.changed.connect(
-            lambda i: self.win.toast.show_text(f"Capture mode: {self.mode.options[i][1]}"))
 
         self._reflect_settings()
         self.refresh_theme_icon()
@@ -428,7 +413,6 @@ class SettingsPage(QWidget):
     theme_picked = pyqtSignal(str)
 
     FILL_PRESETS = ["#6366F1", "#22D3EE", "#34D399", "#FBBF24", "#FB7185"]
-    TEXT_PRESETS = ["#FFFFFF", "#000000", "#FDE68A", "#7DD3FC", "#86EFAC"]
 
     def __init__(self, win):
         super().__init__()
@@ -489,18 +473,6 @@ class SettingsPage(QWidget):
         for w in (self.r_fill, self.r_fop, self.r_bw):
             l1.addWidget(w)
         cl.addWidget(c1)
-
-        c2 = Card(20)
-        l2 = QVBoxLayout(c2)
-        l2.setContentsMargins(16, 12, 16, 12)
-        l2.setSpacing(6)
-        l2.addWidget(make_label("Overlay text", 9.5, _QFont.DemiBold, "soft"))
-        self.r_text = ColorRow("Text color", self.TEXT_PRESETS, s.text_color)
-        self.r_obg = SliderRow("Overlay background", 0, 100, int(s.alpha * 100), "%")
-        self.r_font = SliderRow("Font size", 5, 25, s.font_size, " pt")
-        for w in (self.r_text, self.r_obg, self.r_font):
-            l2.addWidget(w)
-        cl.addWidget(c2)
         cl.addStretch(1)
         scroll.setWidget(content)
         # AFTER setWidget: QScrollArea re-enables autoFill on the scrolled
@@ -519,16 +491,10 @@ class SettingsPage(QWidget):
 
         self.r_fill.colorChanged.connect(
             lambda c: self._set("fill_color", c.name()))
-        self.r_text.colorChanged.connect(
-            lambda c: self._set("text_color", c.name()))
         self.r_fop.valueChanged.connect(
             lambda v: self._set("opacity", v / 100.0))
         self.r_bw.valueChanged.connect(
             lambda v: self._set("line_width", v))
-        self.r_obg.valueChanged.connect(
-            lambda v: self._set("alpha", v / 100.0))
-        self.r_font.valueChanged.connect(
-            lambda v: self._set("font_size", v))
         self.btn_reset.clicked.connect(self.reset)
         self.btn_done.clicked.connect(self.back.emit)
         self.btn_back.clicked.connect(self.back.emit)
@@ -537,8 +503,7 @@ class SettingsPage(QWidget):
     def _preview_state(self):
         s = self.win.store.settings
         return {"fill": s.fill_color, "fill_op": int(s.opacity * 100),
-                "border": s.line_width, "text": s.text_color,
-                "ov_bg": int(s.alpha * 100), "font": s.font_size}
+                "border": s.line_width}
 
     def _sync_preview(self):
         self.pst.update(self._preview_state())
@@ -559,11 +524,8 @@ class SettingsPage(QWidget):
         s = self.win.store.settings
         self.picker.set_current(s.theme)
         self.r_fill.set_color(s.fill_color)
-        self.r_text.set_color(s.text_color)
         self.r_fop.setValue(int(s.opacity * 100))
         self.r_bw.setValue(s.line_width)
-        self.r_obg.setValue(int(s.alpha * 100))
-        self.r_font.setValue(s.font_size)
         self._sync_preview()
 
 

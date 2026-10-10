@@ -208,7 +208,7 @@ class Wordmark(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.f = app_font(15, QFont.Bold, -0.2)
+        self.f = app_font(13.5, QFont.Bold, -0.2)
         fm = QFontMetrics(self.f)
         self.w1 = fm.horizontalAdvance("Lingo ")
         self.setFixedSize(self.w1 + fm.horizontalAdvance("Lens") + 4, 36)
@@ -414,88 +414,6 @@ class PillButton(HoverWidget):
             p.setPen(QPen(alpha(base, 70 + 70 * h), 1)); p.drawPath(path)
             col = mix(Th.c("rose"), QColor("white"), .35) if self.kind == "danger" else Th.c("text")
         draw_text(p, r, self.text, app_font(10, QFont.DemiBold), col, Qt.AlignCenter)
-
-
-# ==========================================================================
-#  Segmented control — capture mode. Options without a backend stay gated.
-# ==========================================================================
-class Segmented(QWidget):
-    """Animated capture-mode switch. ``options``: [(icon, label), ...].
-
-    Every option starts enabled; the window gates modes ``capture.py``
-    cannot serve yet via :meth:`set_option_enabled` (muted paint, no
-    click, reason as hover tooltip).
-    """
-
-    changed = pyqtSignal(int)
-
-    def __init__(self, options, parent=None):
-        super().__init__(parent)
-        self.options = options
-        self.index = 0
-        self._ok = [True] * len(options)
-        self._why = [""] * len(options)
-        self.setFixedHeight(38)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setMouseTracking(True)
-        self._pos = Tween(self, 0, 220, QEasingCurve.OutCubic)
-
-    def set_option_enabled(self, i, enabled, reason=""):
-        self._ok[i] = enabled
-        self._why[i] = reason
-        self.update()
-
-    def _seg_w(self):
-        return (self.width() - 8) / len(self.options)
-
-    def _idx_at(self, x):
-        sw = self._seg_w()
-        if sw <= 0:
-            return 0
-        return max(0, min(len(self.options) - 1, int((x - 4) / sw)))
-
-    def mousePressEvent(self, e):
-        if e.button() != Qt.LeftButton:
-            return
-        i = self._idx_at(e.x())
-        if not self._ok[i] or i == self.index:
-            return
-        self.index = i
-        self._pos.go(i)
-        self.changed.emit(i)
-
-    def mouseMoveEvent(self, e):
-        i = self._idx_at(e.x())
-        self.setToolTip("" if self._ok[i] else self._why[i])
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
-        r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
-        p.fillPath(rounded(r, 12), alpha(Th.c("glass"), 14))
-        p.setPen(QPen(alpha(Th.c("glass"), 30), 1)); p.drawPath(rounded(r, 12))
-
-        sw = self._seg_w()
-        hl = QRectF(4 + self._pos.val * sw + 3, r.top() + 3, sw - 6, r.height() - 6)
-        g = QLinearGradient(hl.topLeft(), hl.bottomRight())
-        g.setColorAt(0, alpha(Th.c("cyan"), 60)); g.setColorAt(1, alpha(Th.c("indigo"), 70))
-        p.fillPath(rounded(hl, 9), QBrush(g))
-        p.setPen(QPen(alpha(Th.c("cyan"), 90), 1)); p.drawPath(rounded(hl, 9))
-
-        f = app_font(9, QFont.DemiBold)
-        fm = QFontMetrics(f)
-        for i, (ic, label) in enumerate(self.options):
-            cell = QRectF(4 + i * sw, r.top(), sw, r.height())
-            sel = abs(self._pos.val - i) < 0.5
-            if not self._ok[i]:
-                col = alpha(Th.c("muted"), 110)
-            else:
-                col = Th.c("text") if sel else Th.c("muted")
-            tw = fm.horizontalAdvance(label)
-            total = 18 + 7 + tw
-            x = cell.center().x() - total / 2
-            draw_icon(p, ic, QRectF(x, cell.center().y() - 9, 18, 18), col, 1.7)
-            draw_text(p, QRectF(x + 25, cell.top(), tw + 4, cell.height()), label, f, col)
 
 
 # ==========================================================================
@@ -1031,13 +949,13 @@ class ThemePicker(QWidget):
         self.current = name; self.update()
 
     def _cell_w(self):
-        return self.width() / 3.0
+        return self.width() / max(1, len(THEME_ORDER))
 
     def _idx(self, x):
         cw = self._cell_w()
         if cw <= 0:
             return 0
-        return max(0, min(2, int(x / cw)))
+        return max(0, min(len(THEME_ORDER) - 1, int(x / cw)))
 
     def mouseMoveEvent(self, e):
         i = self._idx(e.x())
@@ -1081,15 +999,11 @@ class ThemePicker(QWidget):
 
 
 class OverlayPreview(QWidget):
-    """Live style preview of the capture box + overlay text knobs.
+    """Live style preview of the capture box.
 
-    Reads a plain dict (``fill`` hex, ``fill_op`` %, ``border`` px,
-    ``text`` hex, ``ov_bg`` %, ``font`` pt) so it stays decoupled from
-    the settings object. The sample line is a fixed English style mock —
-    it previews colours/geometry, never a translation.
+    Reads a plain dict (``fill`` hex, ``fill_op`` %, ``border`` px)
+    so it stays decoupled from the settings object.
     """
-
-    SAMPLE = "The quick brown fox jumps over the lazy dog"
 
     def __init__(self, st, parent=None):
         super().__init__(parent)
@@ -1122,13 +1036,3 @@ class OverlayPreview(QWidget):
             p.setPen(QPen(fill, st["border"])); p.setBrush(Qt.NoBrush)
             p.drawPath(rounded(box.adjusted(st["border"] / 2, st["border"] / 2,
                                             -st["border"] / 2, -st["border"] / 2), 7))
-        font = app_font(max(6.0, st["font"] * .34), QFont.DemiBold)
-        txt = self.SAMPLE
-        inner = box.adjusted(8, 5, -8, -5)
-        tr = QFontMetrics(font).boundingRect(inner.toRect(), int(Qt.AlignCenter | Qt.TextWordWrap), txt)
-        bub = QRectF(tr).adjusted(-8, -4, 8, 4)
-        bub.moveCenter(box.center())
-        tcol = QColor(st["text"])
-        bg = QColor("black") if tcol.lightness() > 140 else QColor("white")
-        p.fillPath(rounded(bub, 7), alpha(bg, st["ov_bg"] * 2.55))
-        draw_text(p, bub.adjusted(8, 4, -8, -4), txt, font, tcol, Qt.AlignCenter | Qt.TextWordWrap)
