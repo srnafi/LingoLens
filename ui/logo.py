@@ -14,6 +14,7 @@ on the ring), "tile" (flat dark tile + bare ring for small sizes).
 """
 import math
 import os
+import tempfile as _tf
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -97,9 +98,7 @@ def main(argv):
         return 1
     _app = QtWidgets.QApplication(argv[:1])
     if len(argv) > 1 and argv[1] in ("gap", "orbit", "tile"):
-        # Preview mode: render one style to scratch, don't touch runtime.
-        out = (Path("C:/Users/sezar/AppData/Local/hermes/profiles"
-                    "/lingolens-dev/cache/scratch") / f"logo-{argv[1]}.png")
+        out = Path(_tf.gettempdir()) / f"logo-{argv[1]}.png"
         paint_logo(256, argv[1]).save(str(out))
         print(f"Wrote preview to {out}")
         return 0

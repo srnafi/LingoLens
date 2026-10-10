@@ -8,14 +8,8 @@ full-body drag) + a :class:`QStackedWidget` with two pages:
 - :class:`SettingsPage` — theme picker, live style preview, capture-box
   and overlay-text knobs, all writing straight into ``SettingsStore``.
 
-The window owns NO domain state: languages from ``ui.languages``,
+The window owns no domain state: languages from ``ui.languages``,
 prefs from ``SettingsStore``, processes from ``Backend``.
-
-Honest-data rule: nothing here invents telemetry. The Control Center
-process never sees OCR text, latency, or confidence, so there are no
-history-snippet rows and no latency tiles — recent-pair chips (backed
-by ``store.settings.recent_pairs``) are the single recents surface,
-and the footer names the real engine (EasyOCR + OpenVINO).
 """
 
 import math
@@ -282,7 +276,7 @@ class MainPage(QWidget):
         lay.addWidget(self.recents_wrap)
         lay.addSpacing(6)
 
-        # ---- footer: honest engine line ------------------------------------
+        # ---- footer --------------------------------------------------------
         lay.addStretch(1)
         eng = make_label(ENGINE_LINE, 8.5, _QFont.Normal, "muted")
         eng.setAlignment(Qt.AlignCenter)
@@ -740,12 +734,11 @@ if __name__ == "__main__":  # headless check: QT_QPA_PLATFORM=offscreen
         img.save(path)
         return path
 
-    _scratch = ("C:/Users/sezar/AppData/Local/hermes/profiles"
-                "/lingolens-dev/cache/scratch")
+    import tempfile as _tf
+    _scratch = _tf.gettempdir()
     print(_snap(_win, f"{_scratch}/prism_main.png"))
     _win.goto(1)
-    # Let the 260ms page-fade finish; otherwise the shot catches opacity 0.
-    for _ in range(6):
+    for _ in range(6):  # allow the page-fade to finish before the shot
         _app.processEvents()
         time.sleep(0.08)
     print(_snap(_win, f"{_scratch}/prism_settings.png"))

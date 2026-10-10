@@ -1,20 +1,7 @@
-"""Prism widgets — custom-painted Control Center parts.
+"""Custom-painted Control Center widgets (theme-aware via ``ui.theme``).
 
-Port of the standalone Prism concept (``deepseekagain.py``), rewired to the
-real data layer (``ui.languages`` / ``SettingsStore`` / ``Backend``).
-Every widget reads colour through ``ui.theme.Th`` at paint time, so the
-runtime theme morph repaints the whole window with one animation.
-
-Deliberately NOT ported (honest-data rule — the Control Center process
-never sees pipeline internals, so these would all be invented):
-  - ``HistoryList`` (snippet rows + timestamps we don't have) — the recent
-    chips row is the single recents surface, backed by
-    ``store.settings.recent_pairs``.
-  - ``StatTile`` latency/confidence tiles (were ``random()``) and the
-    "Tesseract 5" label (we run EasyOCR).
-  - ``ToggleSwitch``/``ToggleRow`` sound/clipboard toggles (no backend).
-  - ``SAMPLES`` per-language demo strings — the overlay preview uses one
-    fixed English style-preview sentence, never presented as a translation.
+All widgets read colour through ``ui.theme.Th`` at paint time so a
+theme change repaints the window with a single animation.
 """
 
 import math
