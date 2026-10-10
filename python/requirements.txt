@@ -9,5 +9,4 @@ deep-translator>=1.11.0
 requests>=2.28.0
 python-dotenv>=0.19.0
 numpy>=1.21.0
-PyQt5[svg]>=5.15.0  # QtSvg: ui_kit renders its icons from inline SVG
 

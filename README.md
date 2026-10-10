@@ -8,7 +8,7 @@ Originally developed with Electron, LingoLens has been fully refactored into a *
 
 ## 🌟 Key Features
 
-- **Native PyQt5 Control Center**: Minimal frameless dark-themed window for source/destination languages, recent pairs, and one-click snipping — capture appearance, overlay opacity, and font styling live in the Settings dialog.
+- **Native PyQt5 Control Center**: Minimal frameless glass window (Aurora/Dusk/Daylight themes) for source/destination languages, recent pairs, and one-click snipping — capture appearance, overlay opacity, and font styling live in the in-window Settings page (gear button).
 - **🌐 Expanded Global Language Support**: Supports OCR and translation across 20+ languages including English, Spanish, French, German, Italian, Portuguese, Russian, Vietnamese, Bengali, Hindi, Simplified Chinese, Japanese, Korean, Arabic, Urdu, Dutch, Turkish, Polish, Indonesian, and Thai.
 - **🔄 Robust Multi-Service Fallback Translation**: Tiered fallback system (`deep_translator` Google → `deep_translator` MyMemory) ensures zero-failure offline/online translation resilience. `googletrans` is intentionally excluded: it is not in `requirements.txt` and its current PyPI release (4.0.2) is async-incompatible with this synchronous pipeline.
 - **🧠 Persistent OCR Model Architecture**: Flask OCR backend runs locally, loading the heavy EasyOCR model **once** into memory upon startup to guarantee lightning-fast response times on every screen snip.
@@ -22,6 +22,9 @@ Originally developed with Electron, LingoLens has been fully refactored into a *
 ```
 LingoLens/
 ├── app.py                      # PyQt5 Control Center (Main UI & Process Manager)
+├── ui/                         # Control Center UI: main_window, theme, prism_widgets,
+│                               # backend (Flask/snip/hotkey), settings_store, languages,
+│                               # dpi bootstrap, code-generated logo (logo.py)
 ├── python/
 │   ├── ocr_server.py           # Persistent Flask OCR REST API server
 │   ├── capture.py              # PyQt5 Screen Capture Widget (freeze-frame, DPI-aware)
@@ -87,7 +90,7 @@ python run.py
 ## ⌨️ Usage
 1. Open the LingoLens Control Center.
 2. Select your **Source OCR Language** and **Destination Translation Language**.
-3. Customize your selection box fill color, opacity, text color, and font size in the Settings dialog (gear button).
+3. Customize your selection box fill color, opacity, text color, and font size in Settings (gear button).
 4. Press **`Alt+Shift+M`** (or click **Snip & Translate**), drag a box around any text on your screen, and watch the instant translation render in place!
 
 The Flask OCR server starts automatically. On first run, EasyOCR downloads its model weights.

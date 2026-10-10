@@ -23,6 +23,7 @@ class Settings:
     alpha: float = 0.7
     font_size: int = 12
     recent_pairs: list = field(default_factory=list)
+    theme: str = "aurora"  # Prism theme name; see ui.theme.THEME_ORDER
 
 
 class SettingsStore:
@@ -58,6 +59,8 @@ class SettingsStore:
             s.font_size = raw.get("font_size", 12)
             s.recent_pairs = languages.sanitize_recents(
                 raw.get("recent_pairs", []))
+            theme = raw.get("theme", "aurora")
+            s.theme = theme if isinstance(theme, str) and theme else "aurora"
             # Canonicalize against the language tables (survives renames).
             from_idx = languages.find_from_index(
                 s.source_lang_name, s.source_lang_option)
