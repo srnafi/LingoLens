@@ -195,6 +195,7 @@ class MainPage(QWidget):
         else:
             print(f"Source language updated: {name} (same OCR model, no restart)")
         self._update_swap_state()
+        self._refresh_recent_chips()
 
     def _on_to_changed(self, idx):
         name, code = languages.TO_LANGS[idx]
@@ -204,6 +205,7 @@ class MainPage(QWidget):
         print(f"Destination language updated: {name}")
         self.win.store.save()
         self._update_swap_state()
+        self._refresh_recent_chips()
 
     def _update_swap_state(self):
         s = self.win.store.settings
@@ -260,7 +262,7 @@ class MainPage(QWidget):
                 chip.setToolTip(f'{entry["from"]} \u2192 '
                                 f'{languages.to_display_name(entry["to"])}')
                 chip.clicked.connect(
-                    lambda _c, e=dict(entry): self._apply_recent(e))
+                    lambda e=dict(entry): self._apply_recent(e))
                 self.chips_row.addWidget(chip)
         self.chips_row.addStretch(1)
         self.recents_wrap.setVisible(bool(pairs))
