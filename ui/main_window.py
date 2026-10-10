@@ -592,6 +592,7 @@ class LingoLensControlCenter(GlassWindow):
 
         super().__init__(WIN_W, 420)
         self.setWindowTitle("LingoLens")
+        self._last_status = None
         self.backend = Backend(ROOT, on_health=self._set_status)
         self.nativeEventFilter = None
 
@@ -685,8 +686,14 @@ class LingoLensControlCenter(GlassWindow):
 
     # ------------------------------------------------------------------ status
     def _set_status(self, state):
+        if state == self._last_status:
+            return  # repeated same-state poll: skip the pill entirely
+        self._last_status = state
+        main = getattr(self, "main", None)
+        if main is None:
+            return  # backend can report synchronously before MainPage exists
         text, key = HEALTH.get(state, HEALTH["starting"])
-        self.main.pill.set_state(text, key)
+        main.pill.set_state(text, key)
 
     def on_status_clicked(self):
         """Manual re-check; restart the server if it is down."""

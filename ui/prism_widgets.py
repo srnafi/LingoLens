@@ -253,6 +253,9 @@ class StatusPill(QWidget):
         self.font_ = app_font(8.4, QFont.DemiBold)
         self.setCursor(Qt.PointingHandCursor)
         self._pulse = 0.0
+        self._flash_k = 0.0  # one-shot state-change flash, tweens 1 -> 0
+        self.flash = Tween(self, 0.0, 450)
+        self.flash.valueChanged.connect(self._on_flash)
         a = QVariantAnimation(self, duration=1700, loopCount=-1)
         a.setStartValue(0.0); a.setEndValue(1.0)
         a.valueChanged.connect(lambda v: (setattr(self, "_pulse", v), self.update()))
@@ -262,9 +265,16 @@ class StatusPill(QWidget):
     def _fit(self):
         self.setFixedSize(QFontMetrics(self.font_).horizontalAdvance(self.text) + 36, 28)
 
+    def _on_flash(self, v):
+        self._flash_k = float(v)
+
     def set_state(self, text, key):
+        if text == self.text and key == self.key:
+            return  # repeated same-state poll: no flash, no resize churn
         self.text, self.key = text, key
-        self._fit(); self.update()
+        self._fit()
+        self.flash.val = 1.0  # single ease-out tween 1 -> 0 (no self-cancel)
+        self.flash.go(0.0)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -276,7 +286,15 @@ class StatusPill(QWidget):
         col = Th.c(self.key)
         r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
         path = rounded(r, r.height() / 2)
-        p.fillPath(path, alpha(col, 26))
+        fk = max(0.0, min(1.0, self._flash_k))
+        if fk > 0.003:  # one-shot state-change halo, eases out with the tween
+            halo = rounded(r.adjusted(-2.5 * fk, -2.5 * fk, 2.5 * fk, 2.5 * fk),
+                           r.height() / 2 + 2.5 * fk)
+            p.setPen(QPen(alpha(col, 120 * fk), 1.5))
+            p.drawPath(halo)
+            p.fillPath(path, alpha(col, 26 + 70 * fk))
+        else:
+            p.fillPath(path, alpha(col, 26))
         p.setPen(QPen(alpha(col, 85), 1)); p.drawPath(path)
         c = QPointF(15, r.center().y())
         p.setPen(Qt.NoPen)
