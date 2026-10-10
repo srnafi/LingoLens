@@ -1,7 +1,7 @@
 """Main window — LingoLens Control Center in the Prism shell.
 
-One :class:`GlassWindow` (custom-painted glass body, ambient glows,
-full-body drag) + a :class:`QStackedWidget` with two pages:
+One :class:`GlassWindow` (flat custom-painted body, full-body drag)
++ a :class:`QStackedWidget` with two pages:
 
 - :class:`MainPage` — hero snip button, From/To language selectors,
   recent-pair chips, engine status in the logo.
@@ -12,12 +12,11 @@ The window owns no domain state: languages from ``ui.languages``,
 prefs from ``SettingsStore``, processes from ``Backend``.
 """
 
-import math
 import sys
 import time
 
-from PyQt5.QtCore import (QEasingCurve, QPointF, Qt, QPropertyAnimation,
-                          QRectF, QVariantAnimation, QTimer, pyqtSignal)
+from PyQt5.QtCore import (QEasingCurve, Qt, QPropertyAnimation,
+                          QRectF, QVariantAnimation, pyqtSignal)
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (QApplication, QGraphicsOpacityEffect,
                              QHBoxLayout, QLabel, QShortcut,
@@ -32,10 +31,7 @@ from ui.prism_widgets import (Card, Chip, ColorRow, HeroButton, IconButton,
                               LangSelector, LogoStatus, OverlayPreview, PillButton,
                               SliderRow, SwapButton,
                               Toast, Wordmark, make_label)
-from PyQt5.QtGui import QBrush as _QBrush
-from PyQt5.QtGui import QLinearGradient as _QLinearGradient
 from PyQt5.QtGui import QPen as _QPen
-from PyQt5.QtGui import QRadialGradient as _QRadialGradient
 from PyQt5.QtGui import QPainter as _QPainter
 from PyQt5.QtGui import QColor as _QColor
 from PyQt5.QtGui import QFont as _QFont
@@ -44,12 +40,9 @@ ENGINE_LINE = "EasyOCR + OpenVINO · on-device OCR"
 
 
 # ==========================================================================
-#  Glass window — painted body, throttled ambient clock, full-body drag
+#  Glass window — flat painted body, full-body drag
 # ==========================================================================
 class GlassWindow(QWidget):
-    # 15 fps ambient clock; stopped while hidden/minimised (no background burn).
-    AMBIENT_MS = 66
-
     def __init__(self, inner_w, inner_h):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
@@ -57,10 +50,6 @@ class GlassWindow(QWidget):
         self._inner_w = inner_w
         self.set_inner_size(inner_w, inner_h)
         self._drag_off = None
-        self._t0 = time.monotonic()
-        self._clock = QTimer(self, interval=self.AMBIENT_MS)
-        self._clock.timeout.connect(self._tick)
-        self._clock.start()
 
     def set_inner_size(self, w, h):
         """Resize the window around a w×h content body."""
@@ -68,28 +57,6 @@ class GlassWindow(QWidget):
 
     def body_rect(self):
         return QRectF(self.rect()).adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
-
-    # -- ambient clock: repaint only while actually on screen ---------------
-    def _tick(self):
-        if self.isVisible() and not self.isMinimized():
-            self.update()
-
-    def showEvent(self, e):
-        if not self._clock.isActive():
-            self._clock.start()
-        super().showEvent(e)
-
-    def hideEvent(self, e):
-        self._clock.stop()
-        super().hideEvent(e)
-
-    def changeEvent(self, e):
-        if e.type() == e.WindowStateChange:
-            if self.isMinimized():
-                self._clock.stop()
-            elif not self._clock.isActive():
-                self._clock.start()
-        super().changeEvent(e)
 
     # -- painted body ------------------------------------------------------
     def paintEvent(self, e):
@@ -99,36 +66,9 @@ class GlassWindow(QWidget):
 
         body = self.body_rect()
         path = rounded(body, RADIUS)
-        t = time.monotonic() - self._t0
+        p.fillPath(path, Th.c("bg_a"))
 
-        base = _QLinearGradient(body.topLeft(), body.bottomRight())
-        base.setColorAt(0, Th.c("bg_a"))
-        base.setColorAt(1, Th.c("bg_b"))
-        p.fillPath(path, _QBrush(base))
-
-        gs = Th.glow()
-        glows = [
-            (0.12 + 0.07 * math.sin(t * 0.50), -0.02 + 0.04 * math.cos(t * 0.40), 0.85, "indigo", 95),
-            (0.98 + 0.05 * math.cos(t * 0.35), 0.30 + 0.07 * math.sin(t * 0.55), 0.62, "fuchsia", 52),
-            (0.25 + 0.09 * math.sin(t * 0.30 + 2), 1.04 + 0.04 * math.cos(t * 0.50), 0.75, "cyan", 55),
-        ]
-        for fx, fy, fr, key, a in glows:
-            c = QPointF(body.left() + fx * body.width(), body.top() + fy * body.height())
-            g = _QRadialGradient(c, fr * body.width())
-            g.setColorAt(0, alpha(Th.c(key), a * gs))
-            g.setColorAt(1, alpha(Th.c(key), 0))
-            p.fillPath(path, _QBrush(g))
-
-        sheen = _QLinearGradient(body.topLeft(), QPointF(body.left(), body.top() + 140))
-        sheen.setColorAt(0, alpha(Th.c("edge"), 14))
-        sheen.setColorAt(1, alpha(Th.c("edge"), 0))
-        p.fillPath(path, _QBrush(sheen))
-
-        edge = _QLinearGradient(body.topLeft(), body.bottomLeft())
-        edge.setColorAt(0, alpha(Th.c("edge"), 70))
-        edge.setColorAt(0.5, alpha(Th.c("edge"), 22))
-        edge.setColorAt(1, alpha(Th.c("edge"), 12))
-        p.setPen(_QPen(_QBrush(edge), 1.0))
+        p.setPen(_QPen(alpha(Th.c("edge"), 60), 1.0))
         p.setBrush(Qt.NoBrush)
         p.drawPath(rounded(body.adjusted(.5, .5, -.5, -.5), RADIUS - .5))
 
@@ -163,10 +103,10 @@ class MainPage(QWidget):
         bar.addWidget(self.logo)
         bar.addWidget(Wordmark())
         bar.addStretch(1)
-        self.btn_theme = IconButton("sun", 30, tip="Cycle theme")
-        self.btn_settings = IconButton("gear", 30, tip="Settings")
-        self.btn_min = IconButton("minimize", 30, tip="Minimize")
-        self.btn_close = IconButton("close", 30, danger=True, tip="Close")
+        self.btn_theme = IconButton("sun", 34, tip="Cycle theme")
+        self.btn_settings = IconButton("gear", 34, tip="Settings")
+        self.btn_min = IconButton("minimize", 34, tip="Minimize")
+        self.btn_close = IconButton("close", 34, danger=True, tip="Close")
         for b in (self.btn_theme, self.btn_settings, self.btn_min, self.btn_close):
             bar.addWidget(b)
         lay.addLayout(bar)
@@ -339,6 +279,7 @@ class MainPage(QWidget):
     def _cycle_theme(self):
         order = THEME_ORDER
         nxt = order[(order.index(self.win.theme_name) + 1) % len(order)]
+        self.btn_theme.icon_spin.go(self.btn_theme.icon_spin.val + 90)
         self.win.set_theme(nxt)
 
     def refresh_theme_icon(self):

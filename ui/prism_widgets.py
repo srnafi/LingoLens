@@ -11,15 +11,14 @@ from PyQt5.QtCore import (QEasingCurve, QPoint, QPointF,
                           QParallelAnimationGroup, QPropertyAnimation, QRectF,
                           QSize, Qt, QTimer, QVariantAnimation,
                           pyqtSignal)
-from PyQt5.QtGui import (QBrush, QColor, QConicalGradient, QFont, QFontMetrics,
-                         QLinearGradient, QPainter, QPainterPath, QPen,
-                         QPixmap, QPolygonF, QRadialGradient)
+from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetrics,
+                         QPainter, QPainterPath, QPen,
+                         QPolygonF)
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QColorDialog,
                              QFrame, QGraphicsOpacityEffect, QHBoxLayout,
                              QListWidget, QListWidgetItem, QStyle,
                              QStyledItemDelegate, QWidget)
 
-from ui import ROOT
 from ui.theme import (Th, alpha, app_font, css, draw_text, lerp, mix, rounded)
 
 
@@ -185,6 +184,7 @@ class IconButton(HoverWidget):
         super().__init__()
         self.icon, self.danger = icon, danger
         self.setFixedSize(size, size)
+        self.icon_spin = Tween(self, 0, 420, QEasingCurve.InOutCubic)
         if tip:
             self.setToolTip(tip)
 
@@ -195,16 +195,19 @@ class IconButton(HoverWidget):
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         s = 1 - 0.08 * pr
         p.translate(r.center()); p.scale(s, s); p.translate(-r.center())
+        p.translate(0, -1.0 * h)
         bg = alpha(Th.c("rose"), 215 * h) if self.danger else alpha(Th.c("glass"), int(20 * h))
         p.fillPath(rounded(r, r.width() * 0.34), bg)
         col = QColor("white") if (self.danger and h > .5) else mix(Th.c("muted"), Th.c("text"), h)
         if self.icon == "gear":
             p.translate(r.center()); p.rotate(70 * h); p.translate(-r.center())
+        elif self.icon in ("sun", "moon"):
+            p.translate(r.center()); p.rotate(self.icon_spin.val); p.translate(-r.center())
         draw_icon(p, self.icon, r.adjusted(7, 7, -7, -7), col)
 
 
 class Wordmark(QWidget):
-    """'Lingo' in theme text + 'Lens' in a cyan->fuchsia sweep (brand)."""
+    """'Lingo' in theme text + 'Lens' in the flat accent (brand)."""
 
     def __init__(self):
         super().__init__()
@@ -221,74 +224,52 @@ class Wordmark(QWidget):
         a = QPainterPath(); a.addText(0, y, self.f, "Lingo")
         b = QPainterPath(); b.addText(self.w1, y, self.f, "Lens")
         p.fillPath(a, Th.c("text"))
-        g = QLinearGradient(self.w1, 0, self.width(), 0)
-        g.setColorAt(0, Th.c("cyan")); g.setColorAt(1, mix(Th.c("cyan"), Th.c("fuchsia"), .5))
-        p.fillPath(b, QBrush(g))
+        p.fillPath(b, Th.c("indigo"))
 
 
 class LogoStatus(QWidget):
-    """App logo carrying the OCR-engine status dot.
-
-    Not ready: logo static, dot grey. Ready: logo spins, dot lit green.
-    """
-
+    """App logo = OCR-engine status (flat, vector, continuous spin when ready)."""
     clicked = pyqtSignal()
 
-    def __init__(self, size=36):
+    def __init__(self, size=40):
         super().__init__()
         self.setFixedSize(size, size)
         self.setCursor(Qt.PointingHandCursor)
-        self._pm = QPixmap(str(ROOT / "logo.png")).scaled(
-            32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.state, self._angle, self._halo = "starting", 0.0, 0.0
-        self._spin = QVariantAnimation(self, duration=2400, loopCount=-1)
+        self.state, self._sweep = "starting", 0.0
+        self.hover = Tween(self, 0, 160)
+        self._spin = QVariantAnimation(self, duration=1700, loopCount=-1)
         self._spin.setStartValue(0.0)
         self._spin.setEndValue(360.0)
         self._spin.setEasingCurve(QEasingCurve.Linear)
         self._spin.valueChanged.connect(self._on_spin)
-        self._pulse = QVariantAnimation(self, duration=1500, loopCount=-1)
-        self._pulse.setStartValue(0.0)
-        self._pulse.setEndValue(1.0)
-        self._pulse.valueChanged.connect(self._on_pulse)
         self._apply("starting")
 
     def _on_spin(self, v):
-        self._angle = float(v)
-        self.update()
-
-    def _on_pulse(self, v):
-        self._halo = float(v)
-        self.update()
+        self._sweep = float(v); self.update()
 
     def set_state(self, s):
         if s != self.state:
-            self.state = s
-            self._apply(s)
+            self.state = s; self._apply(s)
 
     def _apply(self, s):
         if s == "ready":
-            self._spin.start()
-            self._pulse.start()
-            self.setToolTip("Engine ready")
+            self._spin.start(); self.setToolTip("Engine ready")
         else:
-            self._spin.stop()
-            self._angle = 0.0
-            self._pulse.stop()
-            self._halo = 0.0
+            self._spin.stop(); self._sweep = 0.0
             self.setToolTip("Engine starting…" if s == "starting"
                             else "Engine offline — click to retry")
         self.update()
 
+    def enterEvent(self, e): self.hover.go(1)
+    def leaveEvent(self, e): self.hover.go(0)
+
     def showEvent(self, e):
         if self.state == "ready":
             self._spin.start()
-            self._pulse.start()
         super().showEvent(e)
 
     def hideEvent(self, e):
-        self._spin.stop()
-        self._pulse.stop()
-        super().hideEvent(e)
+        self._spin.stop(); super().hideEvent(e)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -296,26 +277,26 @@ class LogoStatus(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
-        p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-        c = QPointF(self.width() / 2, self.height() / 2)
-        p.save()
-        p.translate(c)
-        p.rotate(self._angle)
-        p.drawPixmap(QPointF(-16, -16), self._pm)
-        p.restore()
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        s = float(self.width())
+        cx = cy = s / 2.0
+        radius, stroke = s * 0.30, s * 0.085
+        ring = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
+        accent = Th.c("indigo")
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(alpha(Th.c("muted"), 70), stroke, Qt.SolidLine, Qt.RoundCap))
+        p.drawEllipse(QPointF(cx, cy), radius, radius)          # dim base ring
+        p.setPen(QPen(accent, stroke, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(ring, int((90 - self._sweep) * 16), int(300 * 16))   # sweeping arc
+        a = math.radians(-35.0 - self._sweep)                   # satellite orbits
+        p.setPen(Qt.NoPen); p.setBrush(accent)
+        p.drawEllipse(QPointF(cx + radius * math.cos(a), cy + radius * math.sin(a)),
+                      stroke * 0.55, stroke * 0.55)
         col = Th.c("green") if self.state == "ready" else Th.c("muted")
-        if self.state == "ready":
-            g = QRadialGradient(c, 10)
-            g.setColorAt(0, alpha(col, 90 + 90 * self._halo))
-            g.setColorAt(1, alpha(col, 0))
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(g))
-            p.drawEllipse(c, 10, 10)
-        p.setPen(Qt.NoPen)
-        p.setBrush(alpha(Th.c("bg_a"), 235))
-        p.drawEllipse(c, 5.5, 5.5)
+        seat = 6.0 + 0.6 * self.hover.val
+        p.setBrush(alpha(Th.c("bg_a"), 235)); p.drawEllipse(QPointF(cx, cy), seat, seat)
         p.setBrush(col)
-        p.drawEllipse(c, 3.4, 3.4)
+        p.drawEllipse(QPointF(cx, cy), 3.6 + 0.4 * self.hover.val, 3.6 + 0.4 * self.hover.val)
 
 
 class Card(QWidget):
@@ -328,19 +309,15 @@ class Card(QWidget):
         p.setRenderHints(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
         path = rounded(r, self.radius)
-        fill = QLinearGradient(r.topLeft(), r.bottomLeft())
-        fill.setColorAt(0, Th.c("card_a")); fill.setColorAt(1, Th.c("card_b"))
-        p.fillPath(path, QBrush(fill))
-        edge = QLinearGradient(r.topLeft(), r.bottomLeft())
-        edge.setColorAt(0, Th.c("card_edge_a")); edge.setColorAt(1, Th.c("card_edge_b"))
-        p.setPen(QPen(QBrush(edge), 1)); p.drawPath(path)
+        p.fillPath(path, Th.c("card_a"))
+        p.setPen(QPen(Th.c("card_edge_a"), 1)); p.drawPath(path)
 
 
 # ==========================================================================
 #  Hero button
 # ==========================================================================
 class HeroButton(HoverWidget):
-    """[camera] Snip & Translate [Alt][Shift][M] — gradient, glow, shine sweep.
+    """[camera] Snip & Translate [Alt][Shift][M] — flat accent, shine sweep.
 
     No busy/fake-progress state: the Control Center never learns when the
     snip pipeline finishes, so the button only reports press + launch.
@@ -366,20 +343,8 @@ class HeroButton(HoverWidget):
         s = 1 - 0.018 * pr
         p.translate(c); p.scale(s, s); p.translate(-c)
 
-        for i in range(14, 0, -1):
-            grow = i * 1.3
-            r = btn.adjusted(-grow, -grow + 11, grow, grow + 11)
-            a = (4.0 + 5.0 * h) * (1 - i / 15.0) ** 1.4
-            p.fillPath(rounded(r, 20 + grow), alpha(Th.c("indigo"), a * 2.2))
-
         path = rounded(btn, 20)
-        g = QLinearGradient(btn.topLeft(), btn.bottomRight())
-        g.setColorAt(0, Th.c("cyan")); g.setColorAt(0.55, Th.c("indigo")); g.setColorAt(1, Th.c("fuchsia"))
-        p.fillPath(path, QBrush(g))
-        sheen = QLinearGradient(btn.topLeft(), btn.bottomLeft())
-        sheen.setColorAt(0, QColor(255, 255, 255, 62)); sheen.setColorAt(0.55, QColor(255, 255, 255, 0))
-        sheen.setColorAt(1, QColor(0, 0, 0, 36))
-        p.fillPath(path, QBrush(sheen))
+        p.fillPath(path, Th.c("indigo"))
         p.fillPath(path, QColor(255, 255, 255, int(16 * h)))
 
         if 0.0 < self.shine.val < 1.0:
@@ -390,9 +355,7 @@ class HeroButton(HoverWidget):
             sweep.closeSubpath()
             p.fillPath(sweep.intersected(path), QColor(255, 255, 255, 46))
 
-        rim = QLinearGradient(btn.topLeft(), btn.bottomLeft())
-        rim.setColorAt(0, QColor(255, 255, 255, 120)); rim.setColorAt(1, QColor(255, 255, 255, 18))
-        p.setPen(QPen(QBrush(rim), 1)); p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 40), 1)); p.setBrush(Qt.NoBrush)
         p.drawPath(rounded(btn.adjusted(.5, .5, -.5, -.5), 19.5))
 
         f_text, f_cap = app_font(12.5, QFont.Bold), app_font(8.3, QFont.Bold)
@@ -428,9 +391,7 @@ class PillButton(HoverWidget):
         p.translate(r.center()); p.scale(s, s); p.translate(-r.center())
         path = rounded(r, r.height() * 0.38)
         if self.kind == "primary":
-            g = QLinearGradient(r.topLeft(), r.bottomRight())
-            g.setColorAt(0, Th.c("cyan")); g.setColorAt(1, Th.c("indigo"))
-            p.fillPath(path, QBrush(g))
+            p.fillPath(path, Th.c("indigo"))
             p.fillPath(path, QColor(255, 255, 255, int(24 * h)))
             p.setPen(QPen(QColor(255, 255, 255, 70), 1)); p.drawPath(path)
             col = QColor("white")
@@ -472,9 +433,7 @@ class LangDelegate(QStyledItemDelegate):
         cur = i == self.current
         path = rounded(r, 12)
         if cur:
-            g = QLinearGradient(r.topLeft(), r.topRight())
-            g.setColorAt(0, alpha(Th.c("cyan"), 52)); g.setColorAt(1, alpha(Th.c("indigo"), 62))
-            p.fillPath(path, QBrush(g))
+            p.fillPath(path, alpha(Th.c("indigo"), 55))
             p.setPen(QPen(alpha(Th.c("cyan"), 80), 1)); p.drawPath(path)
         elif hover:
             p.fillPath(path, alpha(Th.c("glass"), 18))
@@ -564,13 +523,8 @@ class LangPopup(QWidget):
         p.setRenderHints(QPainter.Antialiasing)
         body = QRectF(self.rect()).adjusted(POP_PAD, POP_PAD, -POP_PAD, -POP_PAD)
         path = rounded(body, POP_RADIUS)
-        g = QLinearGradient(body.topLeft(), body.bottomRight())
-        g.setColorAt(0, mix(Th.c("bg_a"), Th.c("glass"), .05))
-        g.setColorAt(1, Th.c("bg_b"))
-        p.fillPath(path, QBrush(g))
-        edge = QLinearGradient(body.topLeft(), body.bottomLeft())
-        edge.setColorAt(0, alpha(Th.c("edge"), 64)); edge.setColorAt(1, alpha(Th.c("edge"), 16))
-        p.setPen(QPen(QBrush(edge), 1)); p.setBrush(Qt.NoBrush)
+        p.fillPath(path, Th.c("bg_a"))
+        p.setPen(QPen(alpha(Th.c("edge"), 60), 1)); p.setBrush(Qt.NoBrush)
         p.drawPath(rounded(body.adjusted(.5, .5, -.5, -.5), POP_RADIUS - .5))
 
     def hideEvent(self, e):
@@ -645,9 +599,7 @@ class LangSelector(HoverWidget):
         items = self._items()
         badge_txt, name = items[self.index]
         badge = QRectF(9, (self.height() - 32) / 2, 38, 32)
-        g = QLinearGradient(badge.topLeft(), badge.bottomRight())
-        g.setColorAt(0, alpha(Th.c("cyan"), 90)); g.setColorAt(1, alpha(Th.c("indigo"), 120))
-        p.fillPath(rounded(badge, 11), QBrush(g))
+        p.fillPath(rounded(badge, 11), Th.c("indigo") if self.align == "right" else Th.c("cyan"))
         draw_text(p, badge, badge_txt, app_font(8.6, QFont.Bold), Th.c("text"), Qt.AlignCenter)
         f = app_font(10, QFont.DemiBold)
         short = name.split(" (")[0]
@@ -681,14 +633,11 @@ class SwapButton(HoverWidget):
         p.translate(r.center()); p.scale(s, s)
         r = r.translated(-r.center())
         p.fillPath(rounded(r, 23), alpha(Th.c("glass"), int(lerp(12, 24, h)) if en else 6))
-        g = QLinearGradient(r.topLeft(), r.bottomRight())
         if en:
-            g.setColorAt(0, mix(alpha(Th.c("glass"), 40), alpha(Th.c("cyan"), 210), h))
-            g.setColorAt(1, mix(alpha(Th.c("glass"), 16), alpha(Th.c("fuchsia"), 210), h))
+            ring = mix(Th.c("cyan"), Th.c("indigo"), h)
         else:
-            g.setColorAt(0, alpha(Th.c("glass"), 18))
-            g.setColorAt(1, alpha(Th.c("glass"), 10))
-        p.setPen(QPen(QBrush(g), 1.3)); p.drawPath(rounded(r, 23))
+            ring = alpha(Th.c("glass"), 14)
+        p.setPen(QPen(ring, 1.3)); p.drawPath(rounded(r, 23))
         p.rotate(self.rot.val)
         col = mix(Th.c("soft"), QColor("white"), h) if en else alpha(Th.c("muted"), 120)
         draw_icon(p, "swap", QRectF(-10, -10, 20, 20), col, 1.9)
@@ -712,6 +661,7 @@ class Chip(HoverWidget):
         p = QPainter(self)
         p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
         h = self.hover.val
+        p.translate(0, -1.0 * h)
         r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
         path = rounded(r, r.height() / 2)
         p.fillPath(path, alpha(Th.c("cyan"), 34) if self.active
@@ -839,14 +789,11 @@ class GlowSlider(QWidget):
         h, d = self.hover.val, self.grab_t.val
         p.fillPath(rounded(tr, 3), alpha(Th.c("glass"), 24))
         if x - tr.left() > 1:
-            g = QLinearGradient(tr.left(), 0, tr.right(), 0)
-            g.setColorAt(0, Th.c("cyan")); g.setColorAt(1, Th.c("fuchsia"))
-            p.fillPath(rounded(QRectF(tr.left(), tr.top(), x - tr.left(), tr.height()), 3), QBrush(g))
+            p.fillPath(rounded(QRectF(tr.left(), tr.top(), x - tr.left(), tr.height()), 3),
+                       Th.c("indigo"))
         c = QPointF(x, self.height() / 2)
-        glow = QRadialGradient(c, 17)
-        glow.setColorAt(0, alpha(Th.c("indigo"), 80 + 90 * d + 30 * h)); glow.setColorAt(1, alpha(Th.c("indigo"), 0))
-        p.setPen(Qt.NoPen); p.setBrush(QBrush(glow)); p.drawEllipse(c, 17, 17)
         rad = 8 + 1.2 * h + 1.0 * d
+        p.setPen(Qt.NoPen)
         p.setBrush(QColor("white")); p.drawEllipse(c, rad, rad)
         p.setBrush(mix(Th.c("cyan"), Th.c("indigo"), .6)); p.drawEllipse(c, rad - 4.2, rad - 4.2)
 
@@ -886,11 +833,9 @@ class Swatches(QWidget):
             custom = i == len(self.presets)
             selected = (not is_preset) if custom else (self.presets[i].name() == self.current.name())
             if custom:
-                g = QConicalGradient(c, 0)
-                for k, col in enumerate(["#FF5E5E", "#FFD24D", "#4DFF88", "#4DD2FF", "#8A5CFF", "#FF5ED2", "#FF5E5E"]):
-                    g.setColorAt(k / 6, QColor(col))
-                p.setPen(Qt.NoPen); p.setBrush(QBrush(g)); p.drawEllipse(c, 9.5, 9.5)
-                p.setBrush(Th.c("bg_b")); p.drawEllipse(c, 6.2, 6.2)
+                p.setPen(Qt.NoPen)
+                p.setBrush(Th.c("glass")); p.drawEllipse(c, 9.5, 9.5)
+                p.setBrush(Th.c("bg_a")); p.drawEllipse(c, 6.2, 6.2)
                 if not is_preset:
                     p.setBrush(self.current); p.drawEllipse(c, 6.2, 6.2)
                 else:
@@ -899,9 +844,6 @@ class Swatches(QWidget):
                     p.drawLine(QPointF(c.x(), c.y() - 3), QPointF(c.x(), c.y() + 3))
             else:
                 p.setPen(Qt.NoPen); p.setBrush(self.presets[i]); p.drawEllipse(c, 9.5, 9.5)
-                hl = QRadialGradient(QPointF(c.x() - 3, c.y() - 4), 10)
-                hl.setColorAt(0, QColor(255, 255, 255, 80)); hl.setColorAt(1, QColor(255, 255, 255, 0))
-                p.setBrush(QBrush(hl)); p.drawEllipse(c, 9.5, 9.5)
             if selected:
                 p.setBrush(Qt.NoBrush); p.setPen(QPen(QColor(255, 255, 255, 230), 1.6))
                 p.drawEllipse(c, 12.6, 12.6)
@@ -974,10 +916,7 @@ class OverlayPreview(QWidget):
         p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
         r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
         path = rounded(r, 16)
-        g = QLinearGradient(r.topLeft(), r.bottomRight())
-        g.setColorAt(0, mix(Th.c("bg_a"), QColor("black"), .25))
-        g.setColorAt(1, Th.c("bg_b"))
-        p.fillPath(path, QBrush(g))
+        p.fillPath(path, Th.c("bg_a"))
         p.setPen(QPen(alpha(Th.c("glass"), 26), 1)); p.drawPath(path)
 
         for i, w in enumerate([.46, .70, .36, .60, .42]):
