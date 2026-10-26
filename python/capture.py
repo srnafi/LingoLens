@@ -270,11 +270,18 @@ class CaptureWidget(QtWidgets.QWidget):
         img.save(str(save_path), format="png")
 
         # Hand off to detector -> OCR -> overlay pipeline
+        engine = os.environ.get("LINGOLENS_OCR_ENGINE", "easyocr")
+        try:
+            source_option = int(os.environ.get("LINGOLENS_SOURCE_OPTION", "1"))
+        except (TypeError, ValueError):
+            source_option = 1
+        logger.info(f"OCR engine={engine}, source_option={source_option}")
         detector.main(
             image_path=str(save_path),
             x1=x1, y1=y1, destination=self.destination,
             alpha=self.alpha, font_size=self.font_size,
             text_color=self.text_color,
+            engine=engine, source_option=source_option,
         )
 
     def _regab_diagnostic(self, x1, y1, x2, y2):

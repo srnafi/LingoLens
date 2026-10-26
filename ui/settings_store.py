@@ -9,6 +9,16 @@ from dataclasses import asdict, dataclass, field
 
 from ui import languages
 
+# Choose the text-recognition backend. "easyocr" is the original pipeline
+# (OpenVINO detector + EasyOCR on Flask); "ppocr" is the optional PP-OCRv6
+# detector + recogniser in python/ppocr.py. Keep ids stable - they are persisted.
+OCR_ENGINES = (
+    ("easyocr", "EasyOCR"),
+    ("ppocr", "PP-OCRv6"),
+)
+OCR_ENGINE_IDS = {key for key, _label in OCR_ENGINES}
+DEFAULT_OCR_ENGINE = "easyocr"
+
 
 @dataclass
 class Settings:
@@ -24,6 +34,19 @@ class Settings:
     font_size: int = 12
     recent_pairs: list = field(default_factory=list)
     theme: str = "aurora"  # Prism theme name; see ui.theme.THEME_ORDER
+    ocr_engine: str = DEFAULT_OCR_ENGINE  # see OCR_ENGINES above
+
+
+# Settings written before the rename; migrate instead of resetting the choice.
+_ENGINE_ALIASES = {"lingolens": "easyocr", "overtranslate": "ppocr"}
+
+
+def _canonical_engine(value):
+    """Map legacy ids onto the current ones, unknown values onto the default."""
+    if not isinstance(value, str):
+        return DEFAULT_OCR_ENGINE
+    value = _ENGINE_ALIASES.get(value.strip().lower(), value.strip().lower())
+    return value if value in OCR_ENGINE_IDS else DEFAULT_OCR_ENGINE
 
 
 class SettingsStore:
@@ -61,6 +84,8 @@ class SettingsStore:
                 raw.get("recent_pairs", []))
             theme = raw.get("theme", "aurora")
             s.theme = theme if isinstance(theme, str) and theme else "aurora"
+            engine = _canonical_engine(raw.get("ocr_engine", DEFAULT_OCR_ENGINE))
+            s.ocr_engine = engine
             # Canonicalize against the language tables (survives renames).
             from_idx = languages.find_from_index(
                 s.source_lang_name, s.source_lang_option)

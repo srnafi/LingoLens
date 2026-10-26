@@ -92,6 +92,58 @@ def _run_ocr(folder_location):
         return {}
 
 
+def _resolve_ppocr(source_option, ocr_info):
+    """Return the engine actually usable for this snip.
+
+    The shipped PP-OCR models read Latin, Chinese and Japanese. For a source
+    language they cannot read (Russian, Bengali, ...), the snip silently stays
+    on the EasyOCR engine instead of painting garbage - and the reason is
+    recorded for the debug dump.
+    """
+    try:
+        import ppocr
+    except Exception as e:
+        logger.warning(f"PP-OCR engine unavailable ({e}); using EasyOCR")
+        ocr_info["fallback_reason"] = f"import failed: {e}"
+        return "easyocr"
+    if not ppocr.models_present():
+        logger.warning("PP-OCR models missing; using EasyOCR")
+        ocr_info["fallback_reason"] = "models missing"
+        return "easyocr"
+    if not ppocr.supports_option(source_option):
+        logger.warning(f"PP-OCR has no model for source option "
+                       f"{source_option}; using EasyOCR")
+        ocr_info["fallback_reason"] = f"no model for source option {source_option}"
+        return "easyocr"
+    return "ppocr"
+
+
+def _run_ppocr(image_path, ocr_info, dbg=None):
+    """Detect + recognise the whole capture in-process (no Flask, no crops)."""
+    import ppocr
+
+    path = image_path or str(_this_dir / "image1.png")
+    img = cv2.imread(str(path))
+    if img is None:
+        logger.error(f"PP-OCR: cannot read {path}")
+        return {}
+
+    timings = {}
+    try:
+        result = ppocr.get_engine().run(img, timings=timings)
+    except Exception as e:
+        logger.error(f"PP-OCR failed: {e}", exc_info=True)
+        ocr_info["error"] = str(e)
+        return {}
+
+    ocr_info.update(timings)
+    logger.info(f"PP-OCR: {len(result)} lines {timings}")
+    if dbg:
+        dbg.stage("ocr")
+        dbg.write_ocr(result)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # OCR result parsing & grouping
 #
@@ -122,9 +174,9 @@ def _parse_ocr_results(ocr_results):
         })
     # Filter: drop words whose text has no letters or digits (spec 5.1:
     # icons recognised as |, O, ~, etc. are not repainted or removed.)
-    import re
-    _has_alnum = re.compile(r'[A-Za-z0-9]')
-    return [w for w in words if w['text'] and _has_alnum.search(w['text'])]
+    # Unicode-aware: the ASCII-only version silently threw away every CJK,
+    # Cyrillic and Bengali reading before it reached translation.
+    return [w for w in words if w['text'] and any(c.isalnum() for c in w['text'])]
 
 
 # Backward-compatible wrappers -- delegate to blocks.py (spec section 5)
@@ -384,7 +436,8 @@ class OverlayWindow(QWidget):
 
 def _write_debug_artifacts(dbg, overlay, capture_bgr, words, block_records,
                            translated, screen_x, screen_y, snip_w, snip_h,
-                           rgba_overlay=None, placements=None, blend_metrics=None):
+                           rgba_overlay=None, placements=None, blend_metrics=None,
+                           ocr_info=None):
     """Write all debug artifacts to the dump directory."""
     import numpy as np
     import cv2
@@ -459,6 +512,7 @@ def _write_debug_artifacts(dbg, overlay, capture_bgr, words, block_records,
 
     # metrics.json
     metrics = {
+        "ocr": ocr_info or {},
         "counts": {
             "words": len(words),
             "lines": sum(len(blk.lines) for blk in block_records),
@@ -526,20 +580,37 @@ def _pixmap_to_rgba(pixmap):
 # ---------------------------------------------------------------------------
 
 def show_translations(screen_x, screen_y, dest, alpha, font_size,
-                      text_color="#000000", image_path=None):
+                      text_color="#000000", image_path=None,
+                      engine="easyocr", source_option=1):
     """Full pipeline: capture → OCR → group → translate → composite overlay.
 
     Creates ONE transparent overlay window exactly matching the snipped region.
     All translated text is drawn at source-relative positions on a reconstructed
     background (source text removed via OpenCV inpainting, background preserved).
+
+    ``engine`` selects the text-recognition backend:
+      * ``"easyocr"``  - current path: OpenVINO detection crops + EasyOCR over
+                         Flask (unchanged);
+      * ``"ppocr"``    - PP-OCRv6 detection + recognition in-process
+                         (``ppocr.py``); Flask and the crops folder are not
+                         used at all.
+    Falls back to ``"easyocr"`` when the PP-OCR models are missing or the
+    selected source language has no PP-OCR model.
     """
     screen_x = int(screen_x)
     screen_y = int(screen_y)
     alpha = float(alpha)
     font_size = int(font_size)
 
+    engine = str(engine or "easyocr").strip().lower()
+    engine = {"lingolens": "easyocr", "overtranslate": "ppocr"}.get(engine, engine)
+    if engine not in ("easyocr", "ppocr"):
+        logger.warning(f"Unknown OCR engine {engine!r}; using easyocr")
+        engine = "easyocr"
+
     logger.info(f"show_translations: screen=({screen_x},{screen_y}), "
-                f"dest={dest}, alpha={alpha}, font_size={font_size}")
+                f"dest={dest}, alpha={alpha}, font_size={font_size}, "
+                f"engine={engine}, source_option={source_option}")
 
     dbg = debug_dump.DebugDump() if debug_dump.is_debug() else None
     if dbg:
@@ -553,22 +624,36 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
         except Exception:
             pass
 
-    if not _wait_for_flask():
-        logger.error("Flask OCR server not ready")
-        _quit_and_return()
-        return
+    ocr_info = {"engine": engine, "source_option": source_option}
+    if engine == "ppocr":
+        engine = _resolve_ppocr(source_option, ocr_info)
+        ocr_info["engine"] = engine
 
-    crops_folder = _this_dir / "crops"
-    if not crops_folder.exists():
-        logger.error("Crops folder not found")
-        _quit_and_return()
-        return
+    if engine == "ppocr":
+        ocr_results = _run_ppocr(image_path, ocr_info, dbg)
+        if not ocr_results:
+            logger.warning("No OCR results from PP-OCR engine")
+            _quit_and_return()
+            return
+    else:
+        if not _wait_for_flask():
+            logger.error("Flask OCR server not ready")
+            _quit_and_return()
+            return
 
-    ocr_results = _run_ocr(str(crops_folder))
-    if not ocr_results:
-        logger.warning("No OCR results from Flask")
-        _quit_and_return()
-        return
+        crops_folder = _this_dir / "crops"
+        if not crops_folder.exists():
+            logger.error("Crops folder not found")
+            _quit_and_return()
+            return
+
+        ocr_results = _run_ocr(str(crops_folder))
+        if dbg:
+            dbg.stage("ocr")
+        if not ocr_results:
+            logger.warning("No OCR results from Flask")
+            _quit_and_return()
+            return
 
     words = _parse_ocr_results(ocr_results)
     if not words:
@@ -651,7 +736,7 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
         _write_debug_artifacts(dbg, overlay, capture_bgr, words, block_records,
                                translated, screen_x, screen_y, snip_w_img, snip_h_img,
                                rgba_overlay=rgba_overlay, placements=placements,
-                               blend_metrics=blend_metrics)
+                               blend_metrics=blend_metrics, ocr_info=ocr_info)
         dbg.finish()
 
 

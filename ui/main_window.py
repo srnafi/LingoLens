@@ -24,12 +24,12 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsOpacityEffect,
 
 from ui import ROOT, languages
 from ui.backend import Backend, register_hotkey, unregister_hotkey
-from ui.settings_store import SettingsStore
+from ui.settings_store import OCR_ENGINES, SettingsStore
 from ui.theme import (PALETTES, RADIUS, SHADOW, THEME_ORDER, WIN_W,
                       Th, alpha, rounded)
 from ui.prism_widgets import (Card, Chip, ColorRow, HeroButton, IconButton,
                               LangSelector, LogoStatus, OverlayPreview, PillButton,
-                              SliderRow, SwapButton,
+                              SegmentedRow, SliderRow, SwapButton,
                               Toast, Wordmark, make_label)
 from PyQt5.QtGui import QPen as _QPen
 from PyQt5.QtGui import QPainter as _QPainter
@@ -148,9 +148,9 @@ class MainPage(QWidget):
 
         # ---- footer --------------------------------------------------------
         lay.addStretch(1)
-        eng = make_label(ENGINE_LINE, 8.5, _QFont.Normal, "muted")
-        eng.setAlignment(Qt.AlignCenter)
-        lay.addWidget(eng)
+        self.eng = make_label(ENGINE_LINE, 8.5, _QFont.Normal, "muted")
+        self.eng.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.eng)
 
         # ---- wiring ----------------------------------------------------------
         self.src.changed.connect(self._on_from_changed)
@@ -181,6 +181,14 @@ class MainPage(QWidget):
         s.dest_lang_name = languages.TO_LANGS[to_idx][0]
         self._update_swap_state()
         self._refresh_recent_chips()
+        self.refresh_engine_line()
+
+    def refresh_engine_line(self):
+        """Footer names the engine this build will actually sniff with."""
+        s = self.win.store.settings
+        engine = "PP-OCRv6" if s.ocr_engine == "ppocr" else "EasyOCR"
+        self.eng.setText(f"{engine} + OpenVINO · on-device OCR")
+
     # ------------------------------------------------------------- languages
     def _on_from_changed(self, idx):
         name, opt = languages.FROM_LANGS[idx]
@@ -330,6 +338,19 @@ class SettingsPage(QWidget):
         for w in (self.r_fill, self.r_fop, self.r_bw):
             l1.addWidget(w)
         lay.addWidget(c1)
+
+        c2 = Card(20)
+        l2 = QVBoxLayout(c2)
+        l2.setContentsMargins(16, 12, 16, 12)
+        l2.setSpacing(6)
+        l2.addWidget(make_label("Text recognition", 9.5, _QFont.DemiBold, "soft"))
+        self.r_engine = SegmentedRow("Engine", OCR_ENGINES, s.ocr_engine)
+        l2.addWidget(self.r_engine)
+        l2.addWidget(make_label(
+            "Both engines run on-device. PP-OCRv6 covers Latin, Chinese and "
+            "Japanese; other source languages fall back to EasyOCR.",
+            8.5, _QFont.Normal, "muted", wrap=True))
+        lay.addWidget(c2)
         lay.addStretch(1)
         lay.addSpacing(10)
 
@@ -347,6 +368,8 @@ class SettingsPage(QWidget):
             lambda v: self._set("opacity", v / 100.0))
         self.r_bw.valueChanged.connect(
             lambda v: self._set("line_width", v))
+        self.r_engine.valueChanged.connect(
+            lambda v: self._set("ocr_engine", v))
         self.btn_reset.clicked.connect(self.reset)
         self.btn_done.clicked.connect(self.back.emit)
         self.btn_back.clicked.connect(self.back.emit)
@@ -365,6 +388,7 @@ class SettingsPage(QWidget):
         setattr(self.win.store.settings, key, value)
         self.win.store.save()
         self._sync_preview()
+        self.win.main.refresh_engine_line()
 
     def reset(self):
         self.win.store.reset()  # keeps recent pairs (history, not config)
@@ -377,7 +401,9 @@ class SettingsPage(QWidget):
         self.r_fill.set_color(s.fill_color)
         self.r_fop.setValue(int(s.opacity * 100))
         self.r_bw.setValue(s.line_width)
+        self.r_engine.select(s.ocr_engine)
         self._sync_preview()
+        self.win.main.refresh_engine_line()
 
 
 # ==========================================================================
@@ -436,6 +462,8 @@ class LingoLensControlCenter(GlassWindow):
     def goto(self, idx):
         if idx == self.stack.currentIndex():
             return
+        if idx == 0 and hasattr(self, "main"):
+            self.main.refresh_engine_line()
         page = self.stack.widget(idx)
         fx = QGraphicsOpacityEffect(page)
         fx.setOpacity(0.0)
@@ -511,7 +539,9 @@ class LingoLensControlCenter(GlassWindow):
         s = self.store.settings
         err = self.backend.launch_snip(
             s.dest_lang, s.fill_color, s.opacity, s.line_width,
-            s.alpha, s.font_size, s.text_color)
+            s.alpha, s.font_size, s.text_color,
+            ocr_engine=s.ocr_engine,
+            source_option=s.source_lang_option)
         if err:
             self.toast.show_text(f"Could not launch snipper: {err}")
         else:

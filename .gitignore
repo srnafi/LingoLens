@@ -68,6 +68,9 @@ python/EasyOCR/model/*.zip
 python/models/*.bin
 python/models/*.xml
 python/models/*.zip
+# PP-OCRv6 ONNX models - see python/models/ppocr/README.md
+python/models/ppocr/**/*.onnx
+python/models/ppocr/**/dict.txt
 *.rar
 *.zip
 

@@ -877,6 +877,179 @@ class SliderRow(QWidget):
         self.slider.setValue(v)
 
 
+SEGMENT_MIN_W = 74     # keeps a one-word option from collapsing
+SEGMENT_INSET = 30     # breathing room inside a segment (label + 2 x 15 px)
+
+
+def segment_width(labels, measure):
+    """Width of one segment: the widest label plus inset padding.
+
+    ``measure`` is ``QFontMetrics.horizontalAdvance`` in the widget; taking it
+    as an argument keeps this decimal-arithmetic testable without Qt.
+    """
+    return max(SEGMENT_MIN_W, max(measure(t) for t in labels) + SEGMENT_INSET)
+
+
+class _Segments(QWidget):
+    """One track, equal halves, a filled thumb that slides between them.
+
+    Label width comes from the font metrics (not ``8 * len(text)``), so long
+    names such as ``PP-OCRv6`` never get clipped by the thumb.
+    """
+
+    valueChanged = pyqtSignal(str)
+
+    PAD = 3
+
+    def __init__(self, options, current, parent=None):
+        super().__init__(parent)
+        self._ids = [oid for oid, _ in options]
+        self._labels = [text for _, text in options]
+        self._value = current if current in self._ids else self._ids[0]
+        self._hover = -1
+        self._slide = Tween(self, self._index(), 170, QEasingCurve.OutCubic)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+        self._font = app_font(9.5, QFont.DemiBold)
+        fm = QFontMetrics(self._font)
+        self._seg_w = segment_width(self._labels, fm.horizontalAdvance)
+        self.setFixedSize(len(self._labels) * self._seg_w + 2 * self.PAD, 30)
+        self.setToolTip("EasyOCR: original pipeline\n"
+                        "PP-OCRv6: detection + recognition in-process")
+
+    # ---- geometry
+    def _index(self):
+        return self._ids.index(self._value)
+
+    def _seg_rect(self, i):
+        r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
+        return QRectF(r.left() + self.PAD + i * self._seg_w,
+                      r.top() + self.PAD, self._seg_w,
+                      r.height() - 2 * self.PAD)
+
+    def _index_at(self, x):
+        i = int((x - self.PAD) // max(1.0, self._seg_w))
+        return max(0, min(len(self._ids) - 1, i))
+
+    # ---- state
+    def select(self, oid, emit=False):
+        if oid not in self._ids or oid == self._value:
+            return False
+        self._value = oid
+        self._hover = -1
+        self._slide.go(self._index())
+        self.update()
+        if emit:
+            self.valueChanged.emit(oid)
+        return True
+
+    def value(self):
+        return self._value
+
+    # ---- painting
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
+        radius = r.height() / 2
+        track = rounded(r, radius)
+        p.fillPath(track, alpha(Th.c("glass"), 16))
+        p.setPen(QPen(alpha(Th.c("glass"), 46), 1))
+        p.drawPath(track)
+
+        # thumb (clipped to the track, so the slide never spills)
+        thumb = QRectF(r.left() + self.PAD + self._slide.val * self._seg_w,
+                       r.top() + self.PAD, self._seg_w,
+                       r.height() - 2 * self.PAD)
+        p.save()
+        p.setClipPath(track)
+        p.fillPath(rounded(thumb, thumb.height() / 2), Th.c("indigo"))
+        p.restore()
+        p.setPen(QPen(QColor(255, 255, 255, 56), 1))
+        p.drawPath(rounded(thumb, thumb.height() / 2))
+
+        f = self._font
+        for i, text in enumerate(self._labels):
+            sel = self._ids[i] == self._value
+            col = QColor("white") if sel else Th.c("soft")
+            if not sel and i == self._hover:
+                col = Th.c("text")
+            draw_text(p, self._seg_rect(i), text, f, col, Qt.AlignCenter)
+
+        if self.hasFocus():
+            p.setPen(QPen(alpha(Th.c("cyan"), 150), 1.2))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(rounded(r.adjusted(1, 1, -1, -1), radius - 1))
+
+    # ---- input
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.select(self._ids[self._index_at(e.x())], emit=True)
+
+    def mouseMoveEvent(self, e):
+        i = self._index_at(e.x())
+        if i != self._hover:
+            self._hover = i
+            self.update()
+
+    def leaveEvent(self, e):
+        if self._hover != -1:
+            self._hover = -1
+            self.update()
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Right, Qt.Key_Down):
+            self.select(self._ids[min(len(self._ids) - 1, self._index() + 1)],
+                        emit=True)
+        elif e.key() in (Qt.Key_Left, Qt.Key_Up):
+            self.select(self._ids[max(0, self._index() - 1)], emit=True)
+        else:
+            super().keyPressEvent(e)
+
+    def focusInEvent(self, e):
+        self.update()
+
+    def focusOutEvent(self, e):
+        self.update()
+
+
+class SegmentedRow(QWidget):
+    """Two-or-more exclusive options, for non-numeric settings.
+
+    ``options`` is ``[(value, label), ...]``; emits the chosen value string.
+    """
+
+    valueChanged = pyqtSignal(str)
+
+    def __init__(self, label, options, current, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(32)
+        ids = [oid for oid, _ in options]
+        self._value = current if current in ids else ids[0]
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        lb = make_label(label, 9.5, QFont.Normal, "soft")
+        row.addWidget(lb)
+        row.addStretch(1)
+        self._seg = _Segments(options, self._value)
+        self._seg.valueChanged.connect(self._on_pick)
+        row.addWidget(self._seg)
+
+    def _on_pick(self, oid):
+        self._value = oid
+        self.valueChanged.emit(oid)
+
+    def select(self, oid):
+        """Set the value without emitting (used when reloading from store)."""
+        if self._seg.select(oid):
+            self._value = oid
+
+    def value(self):
+        return self._value
+
+
 class ColorRow(QWidget):
     colorChanged = pyqtSignal(QColor)
 

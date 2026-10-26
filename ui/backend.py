@@ -6,6 +6,7 @@ Contracts (must not drift):
   - Snip: ``python/capture.py dest fill opacity width alpha fontsize color``.
   - Global hotkey: Alt+Shift+M (win32 only).
 """
+import os
 import subprocess
 import sys
 import ctypes
@@ -99,8 +100,14 @@ class Backend:
 
     # ---- snip subprocess ----
     def launch_snip(self, dest_lang, fill_color, opacity, line_width,
-                    alpha, font_size, text_color):
-        """Launch the freeze-frame screen snipper (positional argv)."""
+                    alpha, font_size, text_color,
+                    ocr_engine="easyocr", source_option=1):
+        """Launch the freeze-frame screen snipper (positional argv).
+
+        The OCR backend and the source-language bundle travel in the child
+        environment (``LINGOLENS_OCR_ENGINE`` / ``LINGOLENS_SOURCE_OPTION``),
+        so the positional argv contract stays exactly as it was.
+        """
         snip_script = self.root / "python" / "capture.py"
         cmd = [
             venv_python(self.root),
@@ -113,10 +120,14 @@ class Backend:
             str(font_size),
             str(text_color),
         ]
-        print(f"Launching screen snipper script: {' '.join(cmd)}")
+        env = os.environ.copy()
+        env["LINGOLENS_OCR_ENGINE"] = str(ocr_engine)
+        env["LINGOLENS_SOURCE_OPTION"] = str(source_option)
+        print(f"Launching screen snipper script: {' '.join(cmd)} "
+              f"(engine={ocr_engine}, source_option={source_option})")
         try:
             self.snip_process = subprocess.Popen(
-                cmd, cwd=str(snip_script.parent))
+                cmd, cwd=str(snip_script.parent), env=env)
         except Exception as e:
             print(f"Failed to launch screen snipper script: {e}")
             return e
