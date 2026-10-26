@@ -28,8 +28,8 @@ from ui.settings_store import OCR_ENGINES, SettingsStore
 from ui.theme import (PALETTES, RADIUS, SHADOW, THEME_ORDER, WIN_W,
                       Th, alpha, rounded)
 from ui.prism_widgets import (Chip, ColorRow, HeroButton, IconButton,
-                              LangSelector, LogoStatus, OverlayPreview, PillButton,
-                              SectionCard, SegmentedRow, SliderRow, SwapButton,
+                              EnginePicker, LangSelector, LogoStatus, OverlayPreview, PillButton,
+                              SectionCard, SliderRow, SwapButton,
                               Toast, Wordmark, make_label)
 from PyQt5.QtGui import QPen as _QPen
 from PyQt5.QtGui import QPainter as _QPainter
@@ -341,12 +341,11 @@ class SettingsPage(QWidget):
 
         self.c_engine = SectionCard("Text recognition")
         self.c_engine.on_resize = self.win._hug
-        self.r_engine = SegmentedRow("Engine", OCR_ENGINES, s.ocr_engine)
+        self.r_engine = EnginePicker([
+            ("easyocr", "EasyOCR", "Original pipeline · broad language coverage"),
+            ("ppocr", "PP-OCRv6", "Fast on-device model · Latin, Chinese, Japanese"),
+        ], s.ocr_engine)
         self.c_engine.add(self.r_engine)
-        self.c_engine.add(make_label(
-            "Both engines run on-device. PP-OCRv6 covers Latin, Chinese and "
-            "Japanese; other source languages fall back to EasyOCR.",
-            8.5, _QFont.Normal, "muted", wrap=True))
         lay.addWidget(self.c_engine)
         self._sync_summaries()
         lay.addStretch(1)

@@ -1240,6 +1240,138 @@ class SegmentedRow(QWidget):
         return self._value
 
 
+class EnginePicker(QWidget):
+    """Selectable engine cards with clear capability summaries."""
+
+    valueChanged = pyqtSignal(str)
+
+    def __init__(self, options, current, parent=None):
+        super().__init__(parent)
+        self._ids = [oid for oid, _label, _desc in options]
+        self._labels = [label for _oid, label, _desc in options]
+        self._descs = [desc for _oid, _label, desc in options]
+        self._value = current if current in self._ids else self._ids[0]
+        self._hover = -1
+        self._press = -1
+        self._focus = Tween(self, 0.0, 140)
+        self.setFixedHeight(len(self._ids) * 54 + (len(self._ids) - 1) * 7)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def _index_at(self, y):
+        step = 61
+        i = int(y // step)
+        if 0 <= i < len(self._ids) and y - i * step <= 54:
+            return i
+        return -1
+
+    def select(self, oid, emit=False):
+        if oid not in self._ids or oid == self._value:
+            return False
+        self._value = oid
+        self._hover = -1
+        self._focus.go(1.0)
+        self.update()
+        if emit:
+            self.valueChanged.emit(oid)
+        return True
+
+    def value(self):
+        return self._value
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._press = self._index_at(e.y())
+            e.accept()
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            i = self._index_at(e.y())
+            if i == self._press and i >= 0:
+                self.select(self._ids[i], emit=True)
+            self._press = -1
+            e.accept()
+
+    def mouseMoveEvent(self, e):
+        i = self._index_at(e.y())
+        if i != self._hover:
+            self._hover = i
+            self.update()
+
+    def leaveEvent(self, e):
+        self._hover = -1
+        self.update()
+
+    def keyPressEvent(self, e):
+        i = self._ids.index(self._value)
+        if e.key() in (Qt.Key_Down, Qt.Key_Right):
+            i = min(len(self._ids) - 1, i + 1)
+            self.select(self._ids[i], emit=True)
+        elif e.key() in (Qt.Key_Up, Qt.Key_Left):
+            i = max(0, i - 1)
+            self.select(self._ids[i], emit=True)
+        elif e.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+            self.select(self._ids[i], emit=True)
+        else:
+            super().keyPressEvent(e)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        for i, (oid, label, desc) in enumerate(zip(self._ids, self._labels, self._descs)):
+            y = i * 61
+            selected = oid == self._value
+            hovered = i == self._hover
+            r = QRectF(0.5, y + 0.5, self.width() - 1, 54)
+            if selected:
+                fill = alpha(Th.c("indigo"), 38 + 18 * self._focus.val)
+                edge = alpha(Th.c("indigo"), 150)
+            elif hovered:
+                fill = alpha(Th.c("glass"), 30)
+                edge = alpha(Th.c("glass"), 70)
+            else:
+                fill = alpha(Th.c("glass"), 12)
+                edge = alpha(Th.c("glass"), 34)
+            p.fillPath(rounded(r, 13), fill)
+            p.setPen(QPen(edge, 1))
+            p.drawPath(rounded(r, 13))
+
+            badge = QRectF(12, y + 13, 28, 28)
+            p.setPen(Qt.NoPen)
+            p.setBrush(alpha(Th.c("cyan" if oid == "easyocr" else "indigo"),
+                             210 if selected else 90))
+            p.drawEllipse(badge)
+            draw_text(p, badge, label[:1], app_font(10, QFont.Bold),
+                      QColor("white"), Qt.AlignCenter)
+            draw_text(p, QRectF(52, y + 8, self.width() - 110, 19), label,
+                      app_font(9.5, QFont.DemiBold),
+                      Th.c("text") if selected else Th.c("soft"),
+                      Qt.AlignLeft | Qt.AlignVCenter)
+            draw_text(p, QRectF(52, y + 27, self.width() - 110, 18), desc,
+                      app_font(8.2, QFont.Normal), Th.c("muted"),
+                      Qt.AlignLeft | Qt.AlignVCenter)
+
+            dot = QRectF(self.width() - 34, y + 19, 16, 16)
+            p.setPen(QPen(alpha(Th.c("indigo"), 210 if selected else 80), 1.3))
+            p.setBrush(Th.c("indigo") if selected else Qt.NoBrush)
+            p.drawEllipse(dot)
+            if selected:
+                p.setPen(QPen(QColor("white"), 1.5, Qt.SolidLine,
+                              Qt.RoundCap, Qt.RoundJoin))
+                p.drawLine(QPointF(dot.left() + 4, dot.center().y()),
+                           QPointF(dot.center().x() - 1, dot.bottom() - 4))
+                p.drawLine(QPointF(dot.center().x() - 1, dot.bottom() - 4),
+                           QPointF(dot.right() - 3, dot.top() + 4))
+
+        if self.hasFocus():
+            i = self._ids.index(self._value)
+            r = QRectF(1.5, i * 61 + 1.5, self.width() - 3, 52)
+            p.setPen(QPen(alpha(Th.c("cyan"), 150), 1.2))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(rounded(r, 12))
+
+
 class ColorRow(QWidget):
     colorChanged = pyqtSignal(QColor)
 
