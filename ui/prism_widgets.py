@@ -1204,6 +1204,70 @@ class _Segments(QWidget):
         self.update()
 
 
+class PillSegmented(_Segments):
+    """Reusable animated pill selector for tabs and compact choices."""
+
+    def __init__(self, options, current, parent=None, width=None):
+        super().__init__(options, current, parent)
+        self.setToolTip("")
+        if width is not None:
+            self._seg_w = (width - 2 * self.PAD) / len(self._ids)
+            self.setFixedWidth(width)
+
+
+class ToggleSwitch(QWidget):
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, checked=True, parent=None):
+        super().__init__(parent)
+        self.checked = bool(checked)
+        self.setFixedSize(44, 26)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def setChecked(self, checked):
+        self.checked = bool(checked)
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.checked = not self.checked
+            self.update()
+            self.toggled.emit(self.checked)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        track = rounded(QRectF(0, 0, 44, 26), 13)
+        p.fillPath(track, Th.c("indigo") if self.checked else alpha(Th.c("glass"), 65))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("white"))
+        p.drawEllipse(QPointF(13 if not self.checked else 31, 13), 10, 10)
+
+
+class MeterBar(QWidget):
+    """Three-segment capability meter with a small staggered reveal."""
+
+    def __init__(self, level=0, parent=None):
+        super().__init__(parent)
+        self.level = 0
+        self.setFixedSize(92, 10)
+        self.set_level(level)
+
+    def set_level(self, level):
+        self.level = max(0, min(3, int(level)))
+        self.update()
+        for i in range(3):
+            QTimer.singleShot(i * 40, self.update)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        for i in range(3):
+            p.setPen(Qt.NoPen)
+            p.setBrush(Th.c("indigo") if i < self.level else alpha(Th.c("glass"), 45))
+            p.drawRoundedRect(QRectF(i * 32, 2, 28, 6), 3, 3)
+
+
 class SegmentedRow(QWidget):
     """Two-or-more exclusive options, for non-numeric settings.
 

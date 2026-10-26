@@ -35,6 +35,13 @@ class Settings:
     recent_pairs: list = field(default_factory=list)
     theme: str = "aurora"  # Prism theme name; see ui.theme.THEME_ORDER
     ocr_engine: str = DEFAULT_OCR_ENGINE  # see OCR_ENGINES above
+    # Settings UI model. Keep the legacy language keys above for backend
+    # compatibility while these fields provide a stable UI-facing shape.
+    langs: list = field(default_factory=lambda: ["English"])
+    translate: bool = True
+    from_lang: str = "English"
+    to_lang: str = "en"
+    provider: str = "default"
 
 
 # Settings written before the rename; migrate instead of resetting the choice.
@@ -86,6 +93,13 @@ class SettingsStore:
             s.theme = theme if isinstance(theme, str) and theme else "aurora"
             engine = _canonical_engine(raw.get("ocr_engine", DEFAULT_OCR_ENGINE))
             s.ocr_engine = engine
+            s.langs = raw.get("langs", [s.source_lang_name])
+            if not isinstance(s.langs, list) or not all(isinstance(x, str) for x in s.langs):
+                s.langs = [s.source_lang_name]
+            s.translate = bool(raw.get("translate", True))
+            s.from_lang = raw.get("from_lang", s.source_lang_name)
+            s.to_lang = raw.get("to_lang", s.dest_lang)
+            s.provider = raw.get("provider", "default")
             # Canonicalize against the language tables (survives renames).
             from_idx = languages.find_from_index(
                 s.source_lang_name, s.source_lang_option)
@@ -94,6 +108,10 @@ class SettingsStore:
             s.source_lang_option = languages.FROM_LANGS[from_idx][1]
             s.dest_lang = languages.TO_LANGS[to_idx][1]
             s.dest_lang_name = languages.TO_LANGS[to_idx][0]
+            s.from_lang = s.source_lang_name
+            s.to_lang = s.dest_lang
+            if not s.langs:
+                s.langs = [s.source_lang_name]
             print(f"Settings loaded from {self.path}")
         except Exception as e:
             print(f"Failed to load settings: {e}")

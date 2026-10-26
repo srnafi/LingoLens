@@ -28,8 +28,8 @@ from ui.settings_store import OCR_ENGINES, SettingsStore
 from ui.theme import (PALETTES, RADIUS, SHADOW, THEME_ORDER, WIN_W,
                       Th, alpha, rounded)
 from ui.prism_widgets import (Chip, ColorRow, HeroButton, IconButton,
-                              EnginePicker, LangSelector, LogoStatus, OverlayPreview, PillButton,
-                              SectionCard, SliderRow, SwapButton,
+                              LangSelector, LogoStatus, MeterBar, OverlayPreview,
+                              PillButton, PillSegmented, SliderRow, SwapButton, ToggleSwitch,
                               Toast, Wordmark, make_label)
 from PyQt5.QtGui import QPen as _QPen
 from PyQt5.QtGui import QPainter as _QPainter
@@ -323,33 +323,21 @@ class SettingsPage(QWidget):
         lay.addSpacing(12)
 
         s = self.win.store.settings
-        self.c_capture = SectionCard("Capture box")
-        self.c_capture.on_resize = self.win._hug
-        # The live preview belongs to the capture settings it previews, so it
-        # folds away with them instead of floating above both cards.
-        self.preview = OverlayPreview(self.pst)
-        self.c_capture.body_layout.addSpacing(6)
-        self.c_capture.add(self.preview)
-        self.c_capture.body_layout.addSpacing(10)
-        self.r_fill = ColorRow("Selection fill", self.FILL_PRESETS, s.fill_color)
-        self.r_fop = SliderRow("Selection opacity", 0, 100, int(s.opacity * 100), "%")
-        self.r_bw = SliderRow("Border width", 1, 10, s.line_width, " px")
-        for w in (self.r_fill, self.r_fop, self.r_bw):
-            self.c_capture.add(w)
-        lay.addWidget(self.c_capture)
-        lay.addSpacing(16)
-
-        self.c_engine = SectionCard("Text recognition")
-        self.c_engine.on_resize = self.win._hug
-        self.r_engine = EnginePicker([
-            ("easyocr", "EasyOCR", "Original pipeline · broad language coverage"),
-            ("ppocr", "PP-OCRv6", "Fast on-device model · Latin, Chinese, Japanese"),
-        ], s.ocr_engine)
-        self.c_engine.add(self.r_engine)
-        lay.addWidget(self.c_engine)
-        self._sync_summaries()
-        lay.addStretch(1)
-        lay.addSpacing(16)
+        self.tabs = PillSegmented([
+            ("capture", "Capture"), ("read", "Read"),
+            ("translate", "Translate"), ("keys", "Hotkeys"),
+            ("general", "General"),
+        ], "capture", width=424)
+        lay.addWidget(self.tabs, 0, Qt.AlignHCenter)
+        lay.addSpacing(12)
+        self.panels = QStackedWidget()
+        self._build_capture_panel(s)
+        self._build_read_panel(s)
+        self._build_translate_panel(s)
+        self._build_hotkeys_panel()
+        self._build_general_panel(s)
+        lay.addWidget(self.panels, 1)
+        lay.addSpacing(14)
 
         foot = QHBoxLayout()
         self.btn_reset = PillButton("Reset defaults", "danger", 138)
@@ -359,25 +347,144 @@ class SettingsPage(QWidget):
         foot.addWidget(self.btn_done)
         lay.addLayout(foot)
 
-        self.r_fill.colorChanged.connect(
-            lambda c: self._set("fill_color", c.name()))
-        self.r_fop.valueChanged.connect(
-            lambda v: self._set("opacity", v / 100.0))
-        self.r_bw.valueChanged.connect(
-            lambda v: self._set("line_width", v))
-        self.r_engine.valueChanged.connect(
-            lambda v: self._set("ocr_engine", v))
+        self.tabs.valueChanged.connect(self._switch_panel)
+        self.r_fill.colorChanged.connect(lambda c: self._set("fill_color", c.name()))
+        self.r_fop.valueChanged.connect(lambda v: self._set("opacity", v / 100.0))
+        self.r_bw.valueChanged.connect(lambda v: self._set("line_width", v))
+        self.r_engine.valueChanged.connect(lambda v: self._set("ocr_engine", v))
         self.btn_reset.clicked.connect(self.reset)
         self.btn_done.clicked.connect(self.back.emit)
         self.btn_back.clicked.connect(self.back.emit)
 
+    def _panel(self, title):
+        panel = QWidget()
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(10)
+        if title:
+            box.addWidget(make_label(title, 10, _QFont.DemiBold, "soft"))
+        self.panels.addWidget(panel)
+        return box
+
+    def _build_capture_panel(self, s):
+        box = self._panel("")
+        self.preview = OverlayPreview(self.pst)
+        box.addWidget(self.preview)
+        self.r_fill = ColorRow("Selection fill", self.FILL_PRESETS, s.fill_color)
+        self.r_fop = SliderRow("Opacity", 0, 100, int(s.opacity * 100), "%")
+        self.r_bw = SliderRow("Border width", 0, 10, s.line_width, " px")
+        for row in (self.r_fill, self.r_fop, self.r_bw):
+            box.addWidget(row)
+        box.addStretch(1)
+
+    def _build_read_panel(self, s):
+        box = self._panel("Recognition engine")
+        self.r_engine = PillSegmented(OCR_ENGINES, s.ocr_engine)
+        box.addWidget(self.r_engine, 0, Qt.AlignLeft)
+        self.read_spec = make_label("", 8.8, _QFont.Normal, "muted", wrap=True)
+        box.addWidget(self.read_spec)
+        meters = QHBoxLayout()
+        meters.addWidget(make_label("Speed", 8.8, _QFont.Normal, "muted"))
+        self.speed_meter = MeterBar()
+        meters.addWidget(self.speed_meter)
+        meters.addSpacing(12)
+        meters.addWidget(make_label("Coverage", 8.8, _QFont.Normal, "muted"))
+        self.cover_meter = MeterBar()
+        meters.addWidget(self.cover_meter)
+        meters.addStretch(1)
+        box.addLayout(meters)
+        box.addWidget(make_label("Languages to read", 9.5, _QFont.DemiBold, "soft"))
+        self.read_langs = PillSegmented([(x.lower(), x) for x in
+                                         ("Latin", "Chinese", "Japanese")], "latin")
+        box.addWidget(self.read_langs, 0, Qt.AlignLeft)
+        box.addStretch(1)
+        self._sync_read_panel()
+        self.read_langs.valueChanged.connect(
+            lambda value: self._set("langs", [value.title()]))
+
+    def _build_translate_panel(self, s):
+        box = self._panel("Translate after capture")
+        self.translate_toggle = ToggleSwitch(s.translate)
+        row = QHBoxLayout()
+        row.addWidget(make_label("Show translation after capture", 9.5, _QFont.Normal, "soft"))
+        row.addStretch(1); row.addWidget(self.translate_toggle)
+        box.addLayout(row)
+        langs = QHBoxLayout()
+        self.tr_from = LangSelector(languages.FROM_LANGS,
+                                    lambda i, r: languages.FROM_SHORT[i],
+                                    lambda i, r: r[0], languages.find_from_index(s.from_lang, s.source_lang_option), "left")
+        self.tr_to = LangSelector(languages.TO_LANGS,
+                                  lambda i, r: r[1].split("-")[0].upper(),
+                                  lambda i, r: r[0], languages.find_to_index(s.to_lang), "right")
+        self.tr_swap = SwapButton()
+        langs.addWidget(self.tr_from, 1); langs.addWidget(self.tr_swap); langs.addWidget(self.tr_to, 1)
+        box.addLayout(langs)
+        box.addWidget(make_label("Translation provider", 9.5, _QFont.DemiBold, "soft"))
+        self.provider = PillSegmented([
+            ("auto", "Auto · Google"),
+            ("mymemory", "MyMemory"),
+        ], s.provider if s.provider in ("auto", "mymemory") else "auto")
+        box.addWidget(self.provider, 0, Qt.AlignLeft)
+        box.addStretch(1)
+        self.translate_toggle.toggled.connect(lambda v: self._set("translate", v))
+        self.provider.valueChanged.connect(lambda v: self._set("provider", v))
+        self.tr_from.changed.connect(self._on_from_setting)
+        self.tr_to.changed.connect(self._on_to_setting)
+        self.tr_swap.clicked.connect(self._swap_translate)
+
+    def _build_hotkeys_panel(self):
+        box = self._panel("Keyboard shortcuts")
+        for name, key in (("Start capture", "Alt + Shift + M"), ("Cancel", "Esc")):
+            row = QHBoxLayout(); row.addWidget(make_label(name, 9.5, _QFont.Normal, "soft")); row.addStretch(1)
+            row.addWidget(make_label(key, 9.5, _QFont.Bold, "text")); box.addLayout(row)
+        box.addStretch(1)
+
+    def _build_general_panel(self, s):
+        box = self._panel("General")
+        box.addWidget(make_label("Theme", 9.5, _QFont.Normal, "soft"))
+        self.theme_picker = PillSegmented(
+            [(name, name.title()) for name in THEME_ORDER],
+            self.win.theme_name)
+        box.addWidget(self.theme_picker, 0, Qt.AlignLeft)
+        box.addWidget(make_label(
+            "Theme changes apply immediately and are saved for the next launch.",
+            8.5, _QFont.Normal, "muted", wrap=True))
+        box.addStretch(1)
+        self.theme_picker.valueChanged.connect(self.win.set_theme)
+
+    def _switch_panel(self, value):
+        ids = ["capture", "read", "translate", "keys", "general"]
+        self.panels.setCurrentIndex(ids.index(value))
+
+    def _sync_read_panel(self):
+        pp = self.r_engine.value() == "ppocr"
+        self.read_spec.setText("Fast on-device model · Latin, Chinese, Japanese" if pp else "Original pipeline · broad language coverage")
+        self.speed_meter.set_level(3 if pp else 2)
+        self.cover_meter.set_level(2 if pp else 3)
+
+    def _on_from_setting(self, idx):
+        self._set("from_lang", languages.FROM_LANGS[idx][0])
+        self._set("source_lang_name", languages.FROM_LANGS[idx][0])
+        self._set("source_lang_option", languages.FROM_LANGS[idx][1])
+
+    def _on_to_setting(self, idx):
+        self._set("to_lang", languages.TO_LANGS[idx][1])
+        self._set("dest_lang", languages.TO_LANGS[idx][1])
+        self._set("dest_lang_name", languages.TO_LANGS[idx][0])
+
+    def _swap_translate(self):
+        s = self.win.store.settings
+        from_name = s.from_lang
+        to_name = languages.to_display_name(s.to_lang)
+        from_idx = languages.find_from_index(to_name, s.source_lang_option)
+        to_idx = languages.find_to_index(from_name)
+        if from_idx >= 0 and to_idx >= 0:
+            self.tr_from.setCurrentIndex(from_idx, emit=True)
+            self.tr_to.setCurrentIndex(to_idx, emit=True)
+
     # ---- store <-> preview -----------------------------------------------
     def _sync_summaries(self):
-        s = self.win.store.settings
-        self.c_capture.set_summary(
-            f"{int(s.opacity * 100)}% opacity, {s.line_width} px border")
-        self.c_engine.set_summary(
-            "PP-OCRv6" if s.ocr_engine == "ppocr" else "EasyOCR")
+        self._sync_read_panel()
 
     def _preview_state(self):
         s = self.win.store.settings
@@ -407,6 +514,12 @@ class SettingsPage(QWidget):
         self.r_fop.setValue(int(s.opacity * 100))
         self.r_bw.setValue(s.line_width)
         self.r_engine.select(s.ocr_engine)
+        self.translate_toggle.setChecked(s.translate)
+        self.provider.select(s.provider if s.provider in ("auto", "mymemory") else "auto")
+        self.theme_picker.select(self.win.theme_name)
+        langs = s.langs[0].lower() if s.langs else "latin"
+        if langs in ("latin", "chinese", "japanese"):
+            self.read_langs.select(langs)
         self._sync_preview()
         self._sync_summaries()
         self.win.main.refresh_engine_line()
@@ -518,6 +631,10 @@ class LingoLensControlCenter(GlassWindow):
         a.start()
         self._theme_anim = a
         self.main.refresh_theme_icon()
+        # Keep the Settings > General picker in step with the header button.
+        picker = getattr(getattr(self, "settings", None), "theme_picker", None)
+        if picker is not None:
+            picker.select(name)
 
     def _refresh_labels(self):
         for lb in self.findChildren(QLabel):
