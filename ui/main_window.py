@@ -15,7 +15,7 @@ prefs from ``SettingsStore``, processes from ``Backend``.
 import sys
 import time
 
-from PyQt5.QtCore import (QEasingCurve, Qt, QPropertyAnimation,
+from PyQt5.QtCore import (QEasingCurve, QEvent, Qt, QPropertyAnimation,
                           QRectF, QVariantAnimation, pyqtSignal)
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (QApplication, QGraphicsOpacityEffect,
@@ -27,9 +27,9 @@ from ui.backend import Backend, register_hotkey, unregister_hotkey
 from ui.settings_store import OCR_ENGINES, SettingsStore
 from ui.theme import (PALETTES, RADIUS, SHADOW, THEME_ORDER, WIN_W,
                       Th, alpha, rounded)
-from ui.prism_widgets import (Card, Chip, ColorRow, HeroButton, IconButton,
+from ui.prism_widgets import (Chip, ColorRow, HeroButton, IconButton,
                               LangSelector, LogoStatus, OverlayPreview, PillButton,
-                              SegmentedRow, SliderRow, SwapButton,
+                              SectionCard, SegmentedRow, SliderRow, SwapButton,
                               Toast, Wordmark, make_label)
 from PyQt5.QtGui import QPen as _QPen
 from PyQt5.QtGui import QPainter as _QPainter
@@ -320,39 +320,37 @@ class SettingsPage(QWidget):
         head.addWidget(make_label("Settings", 15, _QFont.Bold, "text"))
         head.addStretch(1)
         lay.addLayout(head)
-        lay.addSpacing(10)
+        lay.addSpacing(12)
 
-        self.preview = OverlayPreview(self.pst)
-        lay.addWidget(self.preview)
-        lay.addSpacing(10)
-
-        c1 = Card(20)
-        l1 = QVBoxLayout(c1)
-        l1.setContentsMargins(16, 12, 16, 12)
-        l1.setSpacing(6)
-        l1.addWidget(make_label("Capture box", 9.5, _QFont.DemiBold, "soft"))
         s = self.win.store.settings
+        self.c_capture = SectionCard("Capture box")
+        self.c_capture.on_resize = self.win._hug
+        # The live preview belongs to the capture settings it previews, so it
+        # folds away with them instead of floating above both cards.
+        self.preview = OverlayPreview(self.pst)
+        self.c_capture.body_layout.addSpacing(6)
+        self.c_capture.add(self.preview)
+        self.c_capture.body_layout.addSpacing(10)
         self.r_fill = ColorRow("Selection fill", self.FILL_PRESETS, s.fill_color)
         self.r_fop = SliderRow("Selection opacity", 0, 100, int(s.opacity * 100), "%")
         self.r_bw = SliderRow("Border width", 1, 10, s.line_width, " px")
         for w in (self.r_fill, self.r_fop, self.r_bw):
-            l1.addWidget(w)
-        lay.addWidget(c1)
+            self.c_capture.add(w)
+        lay.addWidget(self.c_capture)
+        lay.addSpacing(16)
 
-        c2 = Card(20)
-        l2 = QVBoxLayout(c2)
-        l2.setContentsMargins(16, 12, 16, 12)
-        l2.setSpacing(6)
-        l2.addWidget(make_label("Text recognition", 9.5, _QFont.DemiBold, "soft"))
+        self.c_engine = SectionCard("Text recognition")
+        self.c_engine.on_resize = self.win._hug
         self.r_engine = SegmentedRow("Engine", OCR_ENGINES, s.ocr_engine)
-        l2.addWidget(self.r_engine)
-        l2.addWidget(make_label(
+        self.c_engine.add(self.r_engine)
+        self.c_engine.add(make_label(
             "Both engines run on-device. PP-OCRv6 covers Latin, Chinese and "
             "Japanese; other source languages fall back to EasyOCR.",
             8.5, _QFont.Normal, "muted", wrap=True))
-        lay.addWidget(c2)
+        lay.addWidget(self.c_engine)
+        self._sync_summaries()
         lay.addStretch(1)
-        lay.addSpacing(10)
+        lay.addSpacing(16)
 
         foot = QHBoxLayout()
         self.btn_reset = PillButton("Reset defaults", "danger", 138)
@@ -375,6 +373,13 @@ class SettingsPage(QWidget):
         self.btn_back.clicked.connect(self.back.emit)
 
     # ---- store <-> preview -----------------------------------------------
+    def _sync_summaries(self):
+        s = self.win.store.settings
+        self.c_capture.set_summary(
+            f"{int(s.opacity * 100)}% opacity, {s.line_width} px border")
+        self.c_engine.set_summary(
+            "PP-OCRv6" if s.ocr_engine == "ppocr" else "EasyOCR")
+
     def _preview_state(self):
         s = self.win.store.settings
         return {"fill": s.fill_color, "fill_op": int(s.opacity * 100),
@@ -388,6 +393,7 @@ class SettingsPage(QWidget):
         setattr(self.win.store.settings, key, value)
         self.win.store.save()
         self._sync_preview()
+        self._sync_summaries()
         self.win.main.refresh_engine_line()
 
     def reset(self):
@@ -403,6 +409,7 @@ class SettingsPage(QWidget):
         self.r_bw.setValue(s.line_width)
         self.r_engine.select(s.ocr_engine)
         self._sync_preview()
+        self._sync_summaries()
         self.win.main.refresh_engine_line()
 
 
@@ -453,10 +460,17 @@ class LingoLensControlCenter(GlassWindow):
 
     # ------------------------------------------------------------------ pages
     def _hug(self):
-        """Size the window to the current page's content height."""
+        """Size the window to the current page's content height.
+
+        Layout requests are posted, not immediate, so a section that just
+        collapsed would otherwise measure at its old height; flush them first.
+        """
         page = self.stack.currentWidget()
-        page.layout().activate()
-        hint = max(1, page.sizeHint().height())
+        QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+        lay = page.layout()
+        lay.invalidate()
+        lay.activate()
+        hint = max(1, lay.sizeHint().height())
         self.set_inner_size(WIN_W, hint)
 
     def goto(self, idx):

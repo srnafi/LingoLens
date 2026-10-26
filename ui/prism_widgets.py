@@ -17,7 +17,7 @@ from PyQt5.QtGui import (QColor, QFont, QFontMetrics,
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QColorDialog,
                              QFrame, QGraphicsOpacityEffect, QHBoxLayout,
                              QListWidget, QListWidgetItem, QStyle,
-                             QStyledItemDelegate, QWidget)
+                             QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from ui.theme import (Th, alpha, app_font, css, draw_text, lerp, mix, rounded)
 
@@ -311,6 +311,196 @@ class Card(QWidget):
         path = rounded(r, self.radius)
         p.fillPath(path, Th.c("card_a"))
         p.setPen(QPen(Th.c("card_edge_a"), 1)); p.drawPath(path)
+
+
+class SectionCard(Card):
+    """Titled card whose body folds away; the window grows/shrinks with it.
+
+    Collapsed, the header still shows the current values as a summary, so the
+    section never becomes a mystery box. ``on_resize`` is called on every
+    animation frame so the Control Center can re-hug its height.
+    """
+
+    HEADER_H = 46
+
+    def __init__(self, title, radius=20, expanded=True):
+        super().__init__(radius)
+        self.title = title
+        self.expanded = expanded
+        self.on_resize = None
+        self.summary = ""
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self.header = SectionHeader(title, self)
+        self.header.setMinimumHeight(self.HEADER_H)
+        lay.addWidget(self.header)
+
+        self.body = QWidget(self)
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(16, 2, 16, 14)
+        self.body_layout.setSpacing(6)
+        # The body is revealed by its own height.  An explicit zero minimum is
+        # important when another section above it is being resized: otherwise
+        # QLayout may preserve the body's old minimum and leave this section
+        # partly open.
+        self.body.setMinimumHeight(0)
+        lay.addWidget(self.body)
+
+        self._resize_pending = False
+        self._anim = QPropertyAnimation(self.body, b"maximumHeight", self)
+        self._anim.setDuration(190)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        # Do not resize the parent window on every animation frame.  Re-hugging
+        # the whole page while one card is changing height can steal the
+        # layout allocation from the card below it.
+        self._anim.finished.connect(self._settle)
+
+        if expanded:
+            self.body.setMaximumHeight(16777215)
+        else:
+            self.body.setMaximumHeight(0)
+            self.body.setVisible(False)
+
+    # ---- public
+    def add(self, widget):
+        self.body_layout.addWidget(widget)
+
+    def set_summary(self, text):
+        self.header.summary = text
+        self.header.update()
+
+    def toggle(self):
+        self.set_expanded(not self.expanded)
+
+    def set_expanded(self, on, animate=True):
+        if on == self.expanded:
+            return
+        self.expanded = on
+        self.header.expanded = on
+        self.header.setToolTip("Click to collapse" if on else "Click to expand")
+        self.header.summary_fade.stop()
+        self._anim.stop()
+        # Keep the body fully opaque while its geometry changes.  Fading the
+        # summary text during the same resize makes the controls appear to
+        # dissolve instead of simply folding away.
+        self.header.summary_fade.val = 0.0 if on else 1.0
+        if not animate:
+            self.header.update()
+            self.body.setVisible(on)
+            self.body.setMaximumHeight(16777215 if on else 0)
+            self._tick()
+            return
+        if on:
+            self.body.setVisible(True)
+            start, end = 0, self.body.sizeHint().height()
+        else:
+            start, end = self.body.height(), 0
+        self._anim.setStartValue(start)
+        self._anim.setEndValue(end)
+        self._anim.start()
+
+    # ---- internals
+    def _tick(self, *_):
+        if self.on_resize:
+            self.on_resize()
+
+    def _settle(self):
+        if self.expanded:
+            self.body.setMaximumHeight(16777215)
+        else:
+            self.body.setVisible(False)
+            self.body.setMaximumHeight(0)
+        self.body.updateGeometry()
+        self.updateGeometry()
+        self.header.update()
+        self.update()
+        if self.on_resize:
+            self.on_resize()
+
+
+class SectionHeader(QWidget):
+    """Click target for a SectionCard: title, live summary, rotating chevron."""
+
+    def __init__(self, title, card):
+        super().__init__(card)
+        self.title = title
+        self.card = card
+        self.expanded = card.expanded
+        self.summary = ""
+        self.hover = Tween(self, 0, 150)
+        self.summary_fade = Tween(self, 0.0 if self.expanded else 1.0, 190)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFixedHeight(SectionCard.HEADER_H)
+        self.setToolTip("Click to collapse" if self.expanded else "Click to expand")
+
+    # ---- input
+    def enterEvent(self, e):
+        self.hover.go(1)
+
+    def leaveEvent(self, e):
+        self.hover.go(0)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.card.toggle()
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+            self.card.toggle()
+        else:
+            super().keyPressEvent(e)
+
+    # ---- painting
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        w, h = self.width(), self.height()
+        if self.hover.val > 0.01:
+            p.save()
+            p.setClipRect(self.rect())
+            # Collapsed, the header IS the whole card, so the highlight has to
+            # round its bottom corners too; expanded, the bottom edge is the
+            # card's middle and must stay straight, or the fill bulges out of
+            # the silhouette at the corners.
+            if h >= self.card.height() - 1:
+                shape = rounded(QRectF(0, 0, w, h), self.card.radius)
+            else:
+                shape = rounded(QRectF(0, 0, w, h + self.card.radius),
+                                self.card.radius)
+            p.fillPath(shape, alpha(Th.c("glass"), 10 * self.hover.val))
+            p.restore()
+
+        title_w = w - 96
+        draw_text(p, QRectF(16, 0, title_w, h), self.title,
+                  app_font(10.5, QFont.DemiBold), Th.c("text"),
+                  Qt.AlignVCenter | Qt.AlignLeft)
+
+        if self.summary and self.summary_fade.val > 0.02:
+            draw_text(p, QRectF(16, 0, w - 52, h), self.summary,
+                      app_font(8.5, QFont.Normal),
+                      alpha(Th.c("muted"), 255 * self.summary_fade.val),
+                      Qt.AlignVCenter | Qt.AlignRight)
+
+        cx, cy = w - 21.0, h / 2.0
+        p.save()
+        p.translate(cx, cy)
+        if self.expanded:
+            p.rotate(180)
+        p.setPen(QPen(alpha(Th.c("text"), 150 + 60 * self.hover.val), 1.7,
+                      Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        path = QPainterPath()
+        path.moveTo(-4.5, -2.0)
+        path.lineTo(0.0, 2.6)
+        path.lineTo(4.5, -2.0)
+        p.drawPath(path)
+        p.restore()
+
+        if self.expanded:
+            p.setPen(QPen(alpha(Th.c("glass"), 40), 1))
+            p.drawLine(QPointF(16, h - 0.5), QPointF(w - 16, h - 0.5))
 
 
 # ==========================================================================
