@@ -1372,6 +1372,177 @@ class EnginePicker(QWidget):
             p.drawPath(rounded(r, 12))
 
 
+class SwipeStack(QWidget):
+    """Fixed-size pane container that cross-fades and nudges between panes.
+
+    Unlike ``QStackedWidget`` every pane keeps its own geometry, so the active
+    pane can slide a few pixels while the outgoing one fades — the height of
+    the host never changes, which keeps the page from jumping.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._panes = []
+        self._current = -1
+        self._anims = []
+        self._effects = {}
+
+    def add(self, widget):
+        widget.setParent(self)
+        widget.hide()
+        self._panes.append(widget)
+        return widget
+
+    def count(self):
+        return len(self._panes)
+
+    def current(self):
+        return self._current
+
+    def set_current(self, index, animate=True):
+        if not (0 <= index < len(self._panes)) or index == self._current:
+            return
+        old = self._panes[self._current] if self._current >= 0 else None
+        new = self._panes[index]
+        self._stop()
+        self._current = index
+
+        if not animate or old is None:
+            if old is not None:
+                old.hide()
+            self._place(new, 0.0, 0.0)
+            new.show()
+            return
+
+        new.show()
+        new.raise_()
+        group = QParallelAnimationGroup(self)
+        group.addAnimation(self._fade(self._fx(old, 1.0), 1.0, 0.0))
+        group.addAnimation(self._fade(self._fx(new, 0.0), 0.0, 1.0))
+        group.addAnimation(self._slide(old, 0.0, -10.0))
+        group.addAnimation(self._slide(new, 14.0, 0.0))
+        group.finished.connect(lambda: self._finish(old, new))
+        self._anims = [group]
+        group.start()
+
+    def _fade(self, fx, a0, a1):
+        an = QPropertyAnimation(fx, b"opacity", self)
+        an.setDuration(210)
+        an.setEasingCurve(QEasingCurve.OutCubic)
+        an.setStartValue(a0)
+        an.setEndValue(a1)
+        return an
+
+    def _slide(self, widget, x0, x1):
+        an = QPropertyAnimation(widget, b"pos", self)
+        r = self.rect()
+        an.setDuration(210)
+        an.setEasingCurve(QEasingCurve.OutCubic)
+        an.setStartValue(QPoint(int(x0), 0))
+        an.setEndValue(QPoint(int(x1), 0))
+        widget.setGeometry(int(x0), 0, r.width(), r.height())
+        return an
+
+    # ---- internals
+    def _fx(self, widget, opacity):
+        fx = QGraphicsOpacityEffect(widget)
+        fx.setOpacity(opacity)
+        widget.setGraphicsEffect(fx)
+        self._effects[widget] = fx
+        return fx
+
+    def _place(self, widget, dx=0.0, dy=0.0):
+        r = self.rect()
+        widget.setGeometry(int(dx), int(dy), r.width(), r.height())
+
+    def _stop(self):
+        for g in self._anims:
+            g.stop()
+        self._anims = []
+
+    def _finish(self, old, new):
+        if old is not None:
+            old.setGraphicsEffect(None)
+            old.hide()
+        new.setGraphicsEffect(None)
+        self._place(new, 0.0, 0.0)
+        self._effects.clear()
+        self._anims = []
+
+    def resizeEvent(self, e):
+        if 0 <= self._current < len(self._panes):
+            self._place(self._panes[self._current], 0.0, 0.0)
+        super().resizeEvent(e)
+
+
+class SettingsNav(QWidget):
+    """Compact left rail for switching between settings sections."""
+
+    changed = pyqtSignal(int)
+
+    def __init__(self, items, current=0, parent=None):
+        super().__init__(parent)
+        self.items = list(items)
+        self.current = current
+        self.hover = -1
+        self.setFixedWidth(132)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def _index_at(self, y):
+        i = int((y - 8) // 58)
+        return i if 0 <= i < len(self.items) and y >= 8 + i * 58 else -1
+
+    def set_current(self, index):
+        if 0 <= index < len(self.items):
+            self.current = index
+            self.update()
+
+    def set_subtitle(self, index, text):
+        if 0 <= index < len(self.items):
+            title, _old = self.items[index]
+            self.items[index] = (title, text)
+            self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            i = self._index_at(e.y())
+            if i >= 0 and i != self.current:
+                self.current = i
+                self.update()
+                self.changed.emit(i)
+
+    def mouseMoveEvent(self, e):
+        i = self._index_at(e.y())
+        if i != self.hover:
+            self.hover = i
+            self.update()
+
+    def leaveEvent(self, e):
+        self.hover = -1
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        for i, (title, subtitle) in enumerate(self.items):
+            y = 8 + i * 58
+            r = QRectF(0, y, self.width(), 48)
+            selected = i == self.current
+            if selected:
+                p.fillPath(rounded(r, 13), alpha(Th.c("indigo"), 44))
+                p.fillPath(rounded(QRectF(0, y + 9, 3, 30), 1.5), Th.c("indigo"))
+            elif i == self.hover:
+                p.fillPath(rounded(r, 13), alpha(Th.c("glass"), 28))
+            draw_text(p, QRectF(16, y + 7, 104, 18), title,
+                      app_font(9.3, QFont.DemiBold),
+                      Th.c("text") if selected else Th.c("soft"),
+                      Qt.AlignLeft | Qt.AlignVCenter)
+            draw_text(p, QRectF(16, y + 25, 104, 15), subtitle,
+                      app_font(7.8, QFont.Normal), Th.c("muted"),
+                      Qt.AlignLeft | Qt.AlignVCenter)
+
+
 class ColorRow(QWidget):
     colorChanged = pyqtSignal(QColor)
 

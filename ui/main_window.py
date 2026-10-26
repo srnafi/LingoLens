@@ -28,9 +28,9 @@ from ui.settings_store import OCR_ENGINES, SettingsStore
 from ui.theme import (PALETTES, RADIUS, SHADOW, THEME_ORDER, WIN_W,
                       Th, alpha, rounded)
 from ui.prism_widgets import (Chip, ColorRow, HeroButton, IconButton,
-                              EnginePicker, LangSelector, LogoStatus, OverlayPreview, PillButton,
-                              SectionCard, SliderRow, SwapButton,
-                              Toast, Wordmark, make_label)
+                              EnginePicker, LangSelector, LogoStatus, OverlayPreview,
+                              PillButton, SettingsNav, SliderRow, SwapButton,
+                              SwipeStack, Toast, Wordmark, make_label)
 from PyQt5.QtGui import QPen as _QPen
 from PyQt5.QtGui import QPainter as _QPainter
 from PyQt5.QtGui import QColor as _QColor
@@ -323,33 +323,52 @@ class SettingsPage(QWidget):
         lay.addSpacing(12)
 
         s = self.win.store.settings
-        self.c_capture = SectionCard("Capture box")
-        self.c_capture.on_resize = self.win._hug
-        # The live preview belongs to the capture settings it previews, so it
-        # folds away with them instead of floating above both cards.
+        # Two columns: a static left rail picks the section, the right pane
+        # swaps only that section's controls, so the page height never jumps.
+        cols = QHBoxLayout()
+        cols.setSpacing(14)
+        self.nav = SettingsNav([
+            ("Capture box", "fill, border"),
+            ("Recognition", "OCR engine"),
+        ], 0)
+        cols.addWidget(self.nav, 0, Qt.AlignTop)
+
+        self.panes = SwipeStack()
+        cols.addWidget(self.panes, 1, Qt.AlignTop)
+        lay.addLayout(cols)
+        lay.addStretch(1)
+        lay.addSpacing(14)
+
+        # ---- section 1: capture box
+        self.pane_capture = QWidget()
+        cap = QVBoxLayout(self.pane_capture)
+        cap.setContentsMargins(0, 0, 0, 0)
+        cap.setSpacing(10)
         self.preview = OverlayPreview(self.pst)
-        self.c_capture.body_layout.addSpacing(6)
-        self.c_capture.add(self.preview)
-        self.c_capture.body_layout.addSpacing(10)
+        cap.addWidget(self.preview)
         self.r_fill = ColorRow("Selection fill", self.FILL_PRESETS, s.fill_color)
         self.r_fop = SliderRow("Selection opacity", 0, 100, int(s.opacity * 100), "%")
         self.r_bw = SliderRow("Border width", 1, 10, s.line_width, " px")
         for w in (self.r_fill, self.r_fop, self.r_bw):
-            self.c_capture.add(w)
-        lay.addWidget(self.c_capture)
-        lay.addSpacing(16)
+            cap.addWidget(w)
+        self.panes.add(self.pane_capture)
 
-        self.c_engine = SectionCard("Text recognition")
-        self.c_engine.on_resize = self.win._hug
+        # ---- section 2: text recognition
+        self.pane_engine = QWidget()
+        eng = QVBoxLayout(self.pane_engine)
+        eng.setContentsMargins(0, 0, 0, 0)
+        eng.setSpacing(10)
         self.r_engine = EnginePicker([
             ("easyocr", "EasyOCR", "Original pipeline · broad language coverage"),
             ("ppocr", "PP-OCRv6", "Fast on-device model · Latin, Chinese, Japanese"),
         ], s.ocr_engine)
-        self.c_engine.add(self.r_engine)
-        lay.addWidget(self.c_engine)
+        eng.addWidget(self.r_engine)
+        self.panes.add(self.pane_engine)
+        self.panes.setFixedHeight(max(p.sizeHint().height()
+                                      for p in (self.pane_capture, self.pane_engine)))
+        self.panes.set_current(0, animate=False)
+        self.nav.changed.connect(self._goto_section)
         self._sync_summaries()
-        lay.addStretch(1)
-        lay.addSpacing(16)
 
         foot = QHBoxLayout()
         self.btn_reset = PillButton("Reset defaults", "danger", 138)
@@ -372,12 +391,17 @@ class SettingsPage(QWidget):
         self.btn_back.clicked.connect(self.back.emit)
 
     # ---- store <-> preview -----------------------------------------------
+    def _goto_section(self, index):
+        self.panes.set_current(index)
+        self.nav.set_current(index)
+
     def _sync_summaries(self):
+        """Left rail carries the live values the old summaries showed."""
         s = self.win.store.settings
-        self.c_capture.set_summary(
-            f"{int(s.opacity * 100)}% opacity, {s.line_width} px border")
-        self.c_engine.set_summary(
-            "PP-OCRv6" if s.ocr_engine == "ppocr" else "EasyOCR")
+        self.nav.set_subtitle(
+            0, f"{int(s.opacity * 100)}% · {s.line_width} px")
+        self.nav.set_subtitle(
+            1, "PP-OCRv6" if s.ocr_engine == "ppocr" else "EasyOCR")
 
     def _preview_state(self):
         s = self.win.store.settings
