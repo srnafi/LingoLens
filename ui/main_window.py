@@ -336,7 +336,7 @@ class SettingsPage(QWidget):
     back = pyqtSignal()
 
     FILL_PRESETS = ["#6366F1", "#22D3EE", "#34D399", "#FBBF24", "#FB7185"]
-    TAB_IDS = ["capture", "read", "translate", "keys", "general"]
+    TAB_IDS = ["capture", "read", "translate", "general"]
     CONTENT_W = 380
 
     def __init__(self, win):
@@ -353,16 +353,14 @@ class SettingsPage(QWidget):
         s = self.win.store.settings
         self.tabs = RefTabs([
             ("capture", "Capture"), ("read", "Read"),
-            ("translate", "Translate"), ("keys", "Hotkeys"),
-            ("general", "General"),
-        ], "capture", width=self.CONTENT_W)
+            ("translate", "Translate"), ("general", "General"),
+        ], "capture", width=self.CONTENT_W, fit="text")
         lay.addWidget(self.tabs)
 
         self.panels = QStackedWidget()
         self._build_capture_panel(s)
         self._build_read_panel(s)
         self._build_translate_panel(s)
-        self._build_hotkeys_panel()
         self._build_general_panel(s)
         lay.addWidget(self.panels, 1)
         lay.addSpacing(4)  # .foot { padding-top: 4px }
@@ -395,8 +393,21 @@ class SettingsPage(QWidget):
         self.panels.addWidget(page)
         return box
 
-    def _sub(self, text):
-        return make_label(text, 9.75, _QFont.DemiBold, "text")
+    def _sub(self, box, text):
+        """Reference ``.sub``: 13 px DemiBold with ``margin:4px 0 -4px``."""
+        box.addSpacing(4)
+        box.addWidget(make_label(text, 9.75, _QFont.DemiBold, "text"))
+        box.addSpacing(-4)
+
+    def _rows(self, *rows):
+        """Reference ``.rows``: rows stack with no gap of their own."""
+        host = QWidget()
+        col = QVBoxLayout(host)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        for row in rows:
+            col.addWidget(row)
+        return host
 
     def _build_capture_panel(self, s):
         box = self._panel()
@@ -407,18 +418,17 @@ class SettingsPage(QWidget):
                                   s.fill_color)
         self.r_fop = RefSliderRow("Opacity", 0, 100, int(s.opacity * 100), "%")
         self.r_bw = RefSliderRow("Border width", 0, 10, s.line_width, " px")
-        for row in (self.r_fill, self.r_fop, self.r_bw):
-            box.addWidget(row)
+        box.addWidget(self._rows(self.r_fill, self.r_fop, self.r_bw))
         box.addStretch(1)
 
     def _build_read_panel(self, s):
         box = self._panel()
-        box.addWidget(self._sub("Recognition engine"))
+        self._sub(box, "Recognition engine")
         self.r_engine = RefTabs(OCR_ENGINES, s.ocr_engine, width=self.CONTENT_W)
         box.addWidget(self.r_engine)
         self.spec = RefSpecCard("", 0, 0)
         box.addWidget(self.spec)
-        box.addWidget(self._sub("Languages to read"))
+        self._sub(box, "Languages to read")
         holder = QWidget()
         flow = FlowLayout(holder, spacing=8)
         self.chips = {}
@@ -488,7 +498,7 @@ class SettingsPage(QWidget):
         langs.addLayout(to_col, 1)
         body.addLayout(langs)
 
-        body.addWidget(self._sub("Translation provider"))
+        self._sub(body, "Translation provider")
         self.provider = ProviderList(TRANSLATE_PROVIDERS, s.provider)
         body.addWidget(self.provider)
         box.addWidget(self.tr_body)
@@ -501,16 +511,6 @@ class SettingsPage(QWidget):
         self.tr_to.changed.connect(self._on_to_setting)
         self.tr_swap.clicked.connect(self._swap_translate)
         self._sync_swap()
-
-    def _build_hotkeys_panel(self):
-        s = self.win.store.settings
-        box = self._panel()
-        self.hotkey_field = HotkeyField(s.hotkey)
-        box.addWidget(self._row("Start capture", self.hotkey_field))
-        box.addWidget(self._row("Cancel", KeyChip("Esc")))
-        box.addStretch(1)
-        self.hotkey_field.changed.connect(self._on_hotkey_changed)
-        self.hotkey_field.recordingChanged.connect(self._on_hotkey_recording)
 
     def _row(self, text, widget, hint=None):
         """Reference ``.row``: 48 px tall, 112 px label, content right."""
@@ -530,10 +530,16 @@ class SettingsPage(QWidget):
 
     def _build_general_panel(self, s):
         box = self._panel()
+        self.hotkey_field = HotkeyField(s.hotkey)
         self.autostart_toggle = ToggleSwitch(is_autostart_enabled())
-        box.addWidget(self._row("Start on login", self.autostart_toggle,
-                                "Launch with your system"))
+        box.addWidget(self._rows(
+            self._row("Start capture", self.hotkey_field),
+            self._row("Cancel", KeyChip("Esc")),
+            self._row("Start on login", self.autostart_toggle,
+                      "Launch with your system")))
         box.addStretch(1)
+        self.hotkey_field.changed.connect(self._on_hotkey_changed)
+        self.hotkey_field.recordingChanged.connect(self._on_hotkey_recording)
         self.autostart_toggle.toggled.connect(self._on_autostart_changed)
 
     # ------------------------------------------------------------------ tabs

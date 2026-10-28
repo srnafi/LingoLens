@@ -47,9 +47,16 @@ PROVIDER_META = {
 
 
 # ==========================================================================
-#  Tabs: one track, equal widths, sliding accent pill
+#  Tabs: one track, sliding accent pill
 # ==========================================================================
 class RefTabs(QWidget):
+    """Segmented control.
+
+    ``fit="equal"`` (the reference's ``flex:1``) splits the track evenly.
+    ``fit="text"`` sizes every segment to its own label plus an even share of
+    the leftover track, so a long label is not squeezed.
+    """
+
     valueChanged = pyqtSignal(str)
 
     PAD = 4
@@ -58,15 +65,16 @@ class RefTabs(QWidget):
     TRACK_R = 14
     PILL_R = 10
 
-    def __init__(self, options, current, width=380, parent=None):
+    def __init__(self, options, current, width=380, fit="equal", parent=None):
         super().__init__(parent)
         self._ids = [oid for oid, _lab in options]
         self._labels = [lab for _oid, lab in options]
         self._value = current if current in self._ids else self._ids[0]
         self._hover = -1
         self._width = width
-        self._slide = Tween(self, self._index(), 220, QEasingCurve.OutCubic)
         self._font = f_px(13, QFont.Medium)
+        self._widths = self._measure(fit)
+        self._slide = Tween(self, self._index(), 220, QEasingCurve.OutCubic)
         self.setFixedSize(width, self.TH + 2 * self.PAD)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -76,19 +84,40 @@ class RefTabs(QWidget):
     def _index(self):
         return self._ids.index(self._value)
 
-    def _seg_w(self):
+    def _measure(self, fit):
         n = len(self._ids)
-        return (self._width - 2 * self.PAD - self.GAP * (n - 1)) / n
+        span = self._width - 2 * self.PAD - self.GAP * (n - 1)
+        if fit != "text":
+            return [span / n] * n
+        fm = QFontMetrics(self._font)
+        need = [fm.horizontalAdvance(lab) for lab in self._labels]
+        extra = max(0.0, span - sum(need)) / n
+        return [w + extra for w in need]
+
+    def _seg_x(self, i):
+        return (self.PAD + sum(self._widths[:i])
+                + self.GAP * i)
 
     def _seg_rect(self, i):
         r = QRectF(self.rect())
-        x = r.left() + self.PAD + i * (self._seg_w() + self.GAP)
-        return QRectF(x, r.top() + self.PAD, self._seg_w(), self.TH)
+        return QRectF(r.left() + self._seg_x(i), r.top() + self.PAD,
+                      self._widths[i], self.TH)
+
+    def _thumb_rect(self, pos):
+        """Thumb geometry for a fractional segment index (slide tween)."""
+        last = len(self._ids) - 1
+        lo = max(0, min(last, int(pos)))
+        hi = min(last, lo + 1)
+        f = max(0.0, min(1.0, pos - lo))
+        x = self._seg_x(lo) + (self._seg_x(hi) - self._seg_x(lo)) * f
+        w = self._widths[lo] + (self._widths[hi] - self._widths[lo]) * f
+        return QRectF(x, self.PAD, w, self.TH)
 
     def _index_at(self, x):
-        step = self._seg_w() + self.GAP
-        i = int((x - self.PAD) // max(1.0, step))
-        return max(0, min(len(self._ids) - 1, i))
+        for i in range(len(self._ids)):
+            if x < self._seg_x(i) + self._widths[i] + self.GAP / 2.0:
+                return i
+        return len(self._ids) - 1
 
     # ---- state
     def select(self, oid, emit=False):
@@ -113,10 +142,8 @@ class RefTabs(QWidget):
         track = rounded(r, self.TRACK_R)
         p.fillPath(track, Th.c("surface"))
 
-        seg_w = self._seg_w()
-        thumb_r = QRectF(r.left() + self.PAD
-                         + self._slide.val * (seg_w + self.GAP),
-                         r.top() + self.PAD, seg_w, self.TH)
+        thumb_r = self._thumb_rect(self._slide.val)
+        thumb_r.translate(r.left(), r.top())
         p.save()
         p.setClipPath(track)
         p.fillPath(rounded(thumb_r, self.PILL_R), Th.c("indigo"))
