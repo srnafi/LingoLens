@@ -729,11 +729,13 @@ class LangSelector(HoverWidget):
 
     changed = pyqtSignal(int)
 
-    def __init__(self, rows, badge_of, label_of, index=0, align="left", parent=None):
+    def __init__(self, rows, badge_of, label_of, index=0, align="left", parent=None,
+                 compact=False):
         super().__init__(parent)
         self.rows, self.badge_of, self.label_of = rows, badge_of, label_of
         self.index, self.align = index, align
-        self.setFixedHeight(54)
+        self.compact = compact
+        self.setFixedHeight(44 if compact else 54)
         self.openness = Tween(self, 0, 200)
         self._popup, self._closed_at = None, 0.0
         self.clicked.connect(self._toggle)
@@ -781,6 +783,25 @@ class LangSelector(HoverWidget):
         p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
         h, o = self.hover.val, self.openness.val
         a = max(h, o)
+        if self.compact:
+            # Reference <select>: flat surface, 14 px radius, no badge.
+            r = QRectF(self.rect())
+            p.fillPath(rounded(r, 14), mix(Th.c("surface"), Th.c("surface2"),
+                                           a * .5))
+            _badge, name = self._items()[self.index]
+            short = name.split(" (")[0]
+            f = app_font(9.75)
+            txt = QFontMetrics(f).elidedText(
+                short, Qt.ElideRight, int(self.width() - 44))
+            draw_text(p, QRectF(12, 0, self.width() - 36, self.height()),
+                      txt, f, Th.c("text"))
+            p.save()
+            p.translate(self.width() - 20, self.height() / 2)
+            p.rotate(180 * o)
+            draw_icon(p, "chevron", QRectF(-7, -7, 14, 14),
+                      mix(Th.c("muted"), Th.c("text"), a), 1.8)
+            p.restore()
+            return
         r = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
         path = rounded(r, 17)
         p.fillPath(path, alpha(Th.c("glass"), int(lerp(11, 20, a))))
@@ -1223,25 +1244,158 @@ class ToggleSwitch(QWidget):
         self.checked = bool(checked)
         self.setFixedSize(44, 26)
         self.setCursor(Qt.PointingHandCursor)
+        self._t = Tween(self, 1.0 if self.checked else 0.0, 200)
 
     def setChecked(self, checked):
         self.checked = bool(checked)
+        self._t.go(1.0 if self.checked else 0.0)
         self.update()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self.checked = not self.checked
+            self._t.go(1.0 if self.checked else 0.0)
             self.update()
             self.toggled.emit(self.checked)
 
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        t = self._t.val
         track = rounded(QRectF(0, 0, 44, 26), 13)
-        p.fillPath(track, Th.c("indigo") if self.checked else alpha(Th.c("glass"), 65))
+        p.fillPath(track, mix(Th.c("line"), Th.c("indigo"), t))
         p.setPen(Qt.NoPen)
         p.setBrush(QColor("white"))
-        p.drawEllipse(QPointF(13 if not self.checked else 31, 13), 10, 10)
+        p.drawEllipse(QPointF(13 + 18 * t, 13), 10, 10)
+
+
+_HOTKEY_NAMES = {
+    Qt.Key_Space: "Space", Qt.Key_Tab: "Tab", Qt.Key_Return: "Enter",
+    Qt.Key_Backspace: "Backspace", Qt.Key_Delete: "Delete",
+    Qt.Key_Insert: "Insert", Qt.Key_Home: "Home", Qt.Key_End: "End",
+    Qt.Key_PageUp: "PageUp", Qt.Key_PageDown: "PageDown",
+    Qt.Key_Left: "Left", Qt.Key_Up: "Up", Qt.Key_Right: "Right",
+    Qt.Key_Down: "Down", Qt.Key_Print: "PrintScreen", Qt.Key_Pause: "Pause",
+}
+
+
+def _hotkey_key_name(key):
+    """Human/RegisterHotKey name for a Qt key code, or None if unsupported."""
+    if Qt.Key_A <= key <= Qt.Key_Z:
+        return chr(key)
+    if Qt.Key_0 <= key <= Qt.Key_9:
+        return chr(key)
+    if Qt.Key_F1 <= key <= Qt.Key_F24:
+        return f"F{key - Qt.Key_F1 + 1}"
+    return _HOTKEY_NAMES.get(key)
+
+
+class HotkeyField(QWidget):
+    """Click-to-record global shortcut chip.
+
+    Emits ``changed`` with a portable sequence ("Ctrl+Alt+T") once a valid
+    combination is recorded, and ``recordingChanged`` so the owner can
+    release the live hotkey while the user is typing.
+    """
+
+    changed = pyqtSignal(str)
+    recordingChanged = pyqtSignal(bool)
+
+    def __init__(self, sequence, parent=None):
+        super().__init__(parent)
+        self.sequence = sequence
+        self.recording = False
+        self.rejected = False  # set when the last attempt lacked a modifier
+        self.setFixedHeight(30)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+        self._fit()
+
+    def _fit(self):
+        if self.recording:
+            text = "Press keys…"
+        elif self.rejected:
+            text = "Needs a modifier"
+        else:
+            text = self.sequence
+        f = app_font(9.0, QFont.DemiBold)
+        w = QFontMetrics(f).horizontalAdvance(text) + 24
+        self.setFixedWidth(max(64, w))
+
+    def set_sequence(self, sequence):
+        self.sequence = sequence
+        self._fit()
+        self.update()
+
+    def _start(self):
+        self.recording = True
+        self.rejected = False
+        self._fit()
+        self.setFocus(Qt.MouseFocusReason)
+        self.update()
+        self.recordingChanged.emit(True)
+
+    def _stop(self):
+        if not self.recording:
+            return
+        self.recording = False
+        self._fit()
+        self.update()
+        self.recordingChanged.emit(False)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._start()
+
+    def keyPressEvent(self, e):
+        if not self.recording:
+            super().keyPressEvent(e)
+            return
+        if e.key() == Qt.Key_Escape:
+            self._stop()
+            return
+        mods = e.modifiers()
+        names = []
+        if mods & Qt.ControlModifier:
+            names.append("Ctrl")
+        if mods & Qt.AltModifier:
+            names.append("Alt")
+        if mods & Qt.ShiftModifier:
+            names.append("Shift")
+        if mods & Qt.MetaModifier:
+            names.append("Win")
+        name = _hotkey_key_name(e.key())
+        if name is None:  # modifier-only press: keep waiting
+            return
+        if not names:  # a global hotkey needs at least one modifier
+            self.rejected = True
+            self._fit()
+            self.update()
+            return
+        self.set_sequence("+".join(names + [name]))
+        self._stop()
+        self.changed.emit(self.sequence)
+
+    def focusOutEvent(self, e):
+        self._stop()
+        super().focusOutEvent(e)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        r = QRectF(self.rect())
+        path = rounded(r, 8)
+        if self.recording:
+            p.fillPath(path, alpha(Th.c("indigo"), 70))
+            text = "Press keys…"
+        elif self.rejected:
+            p.fillPath(path, alpha(Th.c("rose"), 60))
+            text = "Needs a modifier"
+        else:
+            p.fillPath(path, Th.c("surface2"))
+            text = self.sequence
+        draw_text(p, r, text, app_font(9.0, QFont.DemiBold),
+                  Th.c("text"), Qt.AlignCenter)
 
 
 class MeterBar(QWidget):

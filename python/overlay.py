@@ -581,7 +581,7 @@ def _pixmap_to_rgba(pixmap):
 
 def show_translations(screen_x, screen_y, dest, alpha, font_size,
                       text_color="#000000", image_path=None,
-                      engine="easyocr", source_option=1):
+                      engine="easyocr", source_option=1, provider="auto"):
     """Full pipeline: capture → OCR → group → translate → composite overlay.
 
     Creates ONE transparent overlay window exactly matching the snipped region.
@@ -596,6 +596,9 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
                          used at all.
     Falls back to ``"easyocr"`` when the PP-OCR models are missing or the
     selected source language has no PP-OCR model.
+
+    ``provider`` pins the translation engine (``"auto"``, ``"google"``,
+    ``"mymemory"``); unknown values fall back to ``"auto"``.
     """
     screen_x = int(screen_x)
     screen_y = int(screen_y)
@@ -610,7 +613,8 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
 
     logger.info(f"show_translations: screen=({screen_x},{screen_y}), "
                 f"dest={dest}, alpha={alpha}, font_size={font_size}, "
-                f"engine={engine}, source_option={source_option}")
+                f"engine={engine}, source_option={source_option}, "
+                f"provider={provider}")
 
     dbg = debug_dump.DebugDump() if debug_dump.is_debug() else None
     if dbg:
@@ -673,7 +677,11 @@ def show_translations(screen_x, screen_y, dest, alpha, font_size,
     # block record; fall back to CJK-aware joining if text is empty.
     def translate_block(idx, block):
         text = block.text if block.text else ' '.join(w['text'] for ln in block.lines for w in ln)
-        return idx, translate_text(text, dest)
+        # Keep the default call compatible with older integrations that
+        # replace translate_text(text, dest) with a two-argument stub.
+        if provider == "auto":
+            return idx, translate_text(text, dest)
+        return idx, translate_text(text, dest, provider=provider)
 
     translated = {}
     n_workers = min(8, len(block_records) + 1)

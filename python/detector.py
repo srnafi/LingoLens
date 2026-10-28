@@ -241,8 +241,11 @@ def _clear_folder(folder):
 
 def main(image_path="image1.png", x1=0, y1=0, destination='hi',
          alpha=0.9, font_size=10, text_color="#000000",
-         engine="easyocr", source_option=1):
+         engine="easyocr", source_option=1, provider="auto"):
     """Pipeline: detect text -> crop -> hand off to overlay.
+
+    ``provider`` pins a translation engine (see translator.PROVIDERS); the
+    default ``"auto"`` keeps the tiered Google -> MyMemory order.
 
     ``engine`` chooses who detects the text:
       * ``"easyocr"`` - OpenVINO detector here writes crops for EasyOCR;
@@ -261,7 +264,7 @@ def main(image_path="image1.png", x1=0, y1=0, destination='hi',
                 screen_x=x1, screen_y=y1, dest=destination,
                 alpha=alpha, font_size=font_size, text_color=text_color,
                 image_path=image_path, engine=engine,
-                source_option=source_option,
+                source_option=source_option, provider=provider,
             )
             try:
                 os.remove(image_path)
@@ -285,7 +288,7 @@ def main(image_path="image1.png", x1=0, y1=0, destination='hi',
             screen_x=x1, screen_y=y1, dest=destination,
             alpha=alpha, font_size=font_size, text_color=text_color,
             image_path=image_path, engine=engine,
-            source_option=source_option,
+            source_option=source_option, provider=provider,
         )
 
         # Clean up after overlay is done

@@ -275,13 +275,16 @@ class CaptureWidget(QtWidgets.QWidget):
             source_option = int(os.environ.get("LINGOLENS_SOURCE_OPTION", "1"))
         except (TypeError, ValueError):
             source_option = 1
-        logger.info(f"OCR engine={engine}, source_option={source_option}")
+        provider = os.environ.get("LINGOLENS_TRANSLATE_PROVIDER", "auto")
+        logger.info(f"OCR engine={engine}, source_option={source_option}, "
+                    f"provider={provider}")
         detector.main(
             image_path=str(save_path),
             x1=x1, y1=y1, destination=self.destination,
             alpha=self.alpha, font_size=self.font_size,
             text_color=self.text_color,
             engine=engine, source_option=source_option,
+            provider=provider,
         )
 
     def _regab_diagnostic(self, x1, y1, x2, y2):
@@ -314,18 +317,38 @@ class CaptureWidget(QtWidgets.QWidget):
             logger.warning(f"Regrab diagnostic failed: {e}")
 
 
+def parse_args(argv):
+    """Parse the positional argv contract shared with ``ui/backend.py``.
+
+    ``destination fill_color opacity line_width`` are the live values. The
+    next three (alpha / font size / text colour) are legacy: the overlay now
+    derives colour and size from the source pixels, so they stay optional and
+    fall back to their old defaults for callers that still pass them.
+    """
+    return {
+        "destination": argv[1] if len(argv) > 1 else "en",
+        "fill_color": argv[2] if len(argv) > 2 else "#ff0000",
+        "opacity": float(argv[3]) if len(argv) > 3 else 0.3,
+        "line_width": float(argv[4]) if len(argv) > 4 else 3,
+        "alpha": float(argv[5]) if len(argv) > 5 else 0.7,
+        "font_size": int(argv[6]) if len(argv) > 6 else 12,
+        "text_color": argv[7] if len(argv) > 7 else "#000000",
+    }
+
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setAttribute(Qt.AA_DisableHighDpiScaling, True)
 
-    destination = sys.argv[1] if len(sys.argv) > 1 else "en"
-    fill_color_hex = sys.argv[2] if len(sys.argv) > 2 else "#ff0000"
-    opacity = float(sys.argv[3]) if len(sys.argv) > 3 else 0.3
-    line_width = float(sys.argv[4]) if len(sys.argv) > 4 else 3
-    alpha = float(sys.argv[5]) if len(sys.argv) > 5 else 0.7
-    font_size = int(sys.argv[6]) if len(sys.argv) > 6 else 12
-    text_color = sys.argv[7] if len(sys.argv) > 7 else "#000000"
+    args = parse_args(sys.argv)
+    destination = args["destination"]
+    fill_color_hex = args["fill_color"]
+    opacity = args["opacity"]
+    line_width = args["line_width"]
+    alpha = args["alpha"]
+    font_size = args["font_size"]
+    text_color = args["text_color"]
 
     logger.info(f"capture.py starting: dest={destination}, "
                 f"alpha={alpha}, font_size={font_size}, text_color={text_color}")

@@ -165,11 +165,29 @@ def _mymemory_translate(text, dest, source=None):
     return None
 
 
-def translate_text(text, dest="hi"):
+# Provider ids persisted in settings.json. "auto" is the tiered default
+# (Google first, MyMemory fallback); the others pin one engine and only fall
+# back when that engine fails, so a snip is never left untranslated.
+PROVIDERS = ("auto", "google", "mymemory")
+
+
+def _canonical_provider(value):
+    """Map unknown/legacy provider ids onto a supported one."""
+    value = str(value or "auto").strip().lower()
+    aliases = {"default": "auto", "local": "auto", "deepl": "auto"}
+    value = aliases.get(value, value)
+    return value if value in PROVIDERS else "auto"
+
+
+def translate_text(text, dest="hi", provider="auto"):
     """Translate a full text block (sentence/paragraph) with tiered fallback.
 
     Translates complete text rather than individual words, which gives the
     translation engine full context for natural, grammatically correct output.
+
+    ``provider`` pins an engine ("google" or "mymemory"); "auto" keeps the
+    original tiered order. A pinned engine that fails still falls through to
+    the other one, so callers get the best available result.
 
     Returns the translated text. If every engine fails, returns the original
     text unchanged (so the caller's "skip if equals source" logic takes over).
@@ -178,17 +196,31 @@ def translate_text(text, dest="hi"):
         return text
 
     text = text.strip()
+    provider = _canonical_provider(provider)
 
-    # Primary: deep_translator GoogleTranslator (googletrans is not used — it
-    # is not in requirements and its current release is async/broken).
-    result = _google_translate(text, dest)
-    if result and result.strip() and result.lower() != text.lower():
-        return result
+    def attempt_google():
+        # deep_translator GoogleTranslator (googletrans is not used — it is not
+        # in requirements and its current release is async/broken).
+        res = _google_translate(text, dest)
+        if res and res.strip() and res.lower() != text.lower():
+            return res
+        return None
 
-    # Fallback: MyMemory (needs region-qualified codes, e.g. "bn-IN").
-    result = _mymemory_translate(text, _normalize_my_memory(dest))
-    if result and result.strip() and result.lower() != text.lower():
-        return result
+    def attempt_mymemory():
+        # MyMemory needs region-qualified codes (e.g. "bn-IN").
+        res = _mymemory_translate(text, _normalize_my_memory(dest))
+        if res and res.strip() and res.lower() != text.lower():
+            return res
+        return None
+
+    order = {"google": (attempt_google, attempt_mymemory),
+             "mymemory": (attempt_mymemory, attempt_google),
+             "auto": (attempt_google, attempt_mymemory)}[provider]
+
+    for attempt in order:
+        result = attempt()
+        if result:
+            return result
 
     # All engines failed or returned the source unchanged: return source.
     logger.debug("translation failed or empty for dest=%s, returning source", dest)

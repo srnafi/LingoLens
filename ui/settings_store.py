@@ -19,6 +19,19 @@ OCR_ENGINES = (
 OCR_ENGINE_IDS = {key for key, _label in OCR_ENGINES}
 DEFAULT_OCR_ENGINE = "easyocr"
 
+# Translation providers. Only engines verified to return translations from this
+# machine are listed; "auto" tries Google then MyMemory. Keep ids stable - they
+# are persisted and passed to python/translator.py as LINGOLENS_TRANSLATE_PROVIDER.
+TRANSLATE_PROVIDERS = (
+    ("auto", "Auto"),
+    ("google", "Google"),
+    ("mymemory", "MyMemory"),
+)
+TRANSLATE_PROVIDER_IDS = {key for key, _label in TRANSLATE_PROVIDERS}
+DEFAULT_PROVIDER = "auto"
+
+DEFAULT_HOTKEY = "Alt+Shift+M"
+
 
 @dataclass
 class Settings:
@@ -27,11 +40,8 @@ class Settings:
     dest_lang: str = "en"
     dest_lang_name: str = "English"
     fill_color: str = "#ff0000"
-    text_color: str = "#000000"
     opacity: float = 0.3
     line_width: int = 3
-    alpha: float = 0.7
-    font_size: int = 12
     recent_pairs: list = field(default_factory=list)
     theme: str = "aurora"  # Prism theme name; see ui.theme.THEME_ORDER
     ocr_engine: str = DEFAULT_OCR_ENGINE  # see OCR_ENGINES above
@@ -41,7 +51,9 @@ class Settings:
     translate: bool = True
     from_lang: str = "English"
     to_lang: str = "en"
-    provider: str = "default"
+    provider: str = DEFAULT_PROVIDER
+    hotkey: str = DEFAULT_HOTKEY  # global capture shortcut, e.g. "Ctrl+Alt+T"
+    autostart: bool = False  # mirror of the HKCU Run entry, set by the UI
 
 
 # Settings written before the rename; migrate instead of resetting the choice.
@@ -54,6 +66,45 @@ def _canonical_engine(value):
         return DEFAULT_OCR_ENGINE
     value = _ENGINE_ALIASES.get(value.strip().lower(), value.strip().lower())
     return value if value in OCR_ENGINE_IDS else DEFAULT_OCR_ENGINE
+
+
+def _canonical_provider(value):
+    """Map legacy ids onto the current ones, unknown values onto the default."""
+    if not isinstance(value, str):
+        return DEFAULT_PROVIDER
+    value = value.strip().lower()
+    aliases = {"default": "auto", "local": "auto"}
+    value = aliases.get(value, value)
+    return value if value in TRANSLATE_PROVIDER_IDS else DEFAULT_PROVIDER
+
+
+def canonical_hotkey(value):
+    """Return a normalized "Ctrl+Alt+X" style string, or the default.
+
+    The UI records shortcuts in Qt's portable format ("ctrl+shift+t"); this
+    normalizes the modifier order and casing so the value is stable in
+    settings.json and easy to parse for RegisterHotKey.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return DEFAULT_HOTKEY
+    mods, key = [], ""
+    for part in value.replace(" ", "").split("+"):
+        low = part.lower()
+        if low in ("ctrl", "control"):
+            mods.append("Ctrl")
+        elif low == "alt":
+            mods.append("Alt")
+        elif low == "shift":
+            mods.append("Shift")
+        elif low in ("win", "meta", "super"):
+            mods.append("Win")
+        elif part:
+            key = part.upper() if len(part) == 1 else part
+    if not mods or not key:
+        return DEFAULT_HOTKEY
+    order = ["Ctrl", "Alt", "Shift", "Win"]
+    seen = [m for m in order if m in mods]
+    return "+".join(seen + [key])
 
 
 class SettingsStore:
@@ -82,11 +133,8 @@ class SettingsStore:
             s.dest_lang = raw.get("dest_lang", "en")
             s.dest_lang_name = raw.get("dest_lang_name", "English")
             s.fill_color = raw.get("fill_color", "#ff0000")
-            s.text_color = raw.get("text_color", "#000000")
             s.opacity = raw.get("opacity", 0.3)
             s.line_width = raw.get("line_width", 3)
-            s.alpha = raw.get("alpha", 0.7)
-            s.font_size = raw.get("font_size", 12)
             s.recent_pairs = languages.sanitize_recents(
                 raw.get("recent_pairs", []))
             theme = raw.get("theme", "aurora")
@@ -99,7 +147,9 @@ class SettingsStore:
             s.translate = bool(raw.get("translate", True))
             s.from_lang = raw.get("from_lang", s.source_lang_name)
             s.to_lang = raw.get("to_lang", s.dest_lang)
-            s.provider = raw.get("provider", "default")
+            s.provider = _canonical_provider(raw.get("provider", DEFAULT_PROVIDER))
+            s.hotkey = canonical_hotkey(raw.get("hotkey", DEFAULT_HOTKEY))
+            s.autostart = bool(raw.get("autostart", False))
             # Canonicalize against the language tables (survives renames).
             from_idx = languages.find_from_index(
                 s.source_lang_name, s.source_lang_option)

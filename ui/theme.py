@@ -28,11 +28,13 @@ class Palette:
 
 PALETTES = {
     "aurora": Palette(
-        bg_a=C("#0E1230"),
-        text=C("#F4F6FF"), soft=C("#C5CBE8"), muted=C("#7F88B0"),
+        # Matches the settings reference tokens (bg/surface/surface2/line).
+        bg_a=C("#0E1029"),
+        text=C("#E8EAF8"), soft=C("#C5CBE8"), muted=C("#AAB0D6"),
         cyan=C("#22D3EE"), indigo=C("#6366F1"), fuchsia=C("#D946EF"),
         green=C("#34D399"), amber=C("#FBBF24"), rose=C("#FB7185"),
         edge=C("#FFFFFF"), glass=C("#FFFFFF"),
+        surface=C("#151838"), surface2=C("#23264F"), line=C("#2A2D5C"),
         card_a=C("#FFFFFF", 17),
         card_edge_a=C("#FFFFFF", 46)),
     "day": Palette(
@@ -41,6 +43,7 @@ PALETTES = {
         cyan=C("#0EA5E9"), indigo=C("#4F46E5"), fuchsia=C("#C026D3"),
         green=C("#0FA97A"), amber=C("#C77D0A"), rose=C("#E11D48"),
         edge=C("#0B1020"), glass=C("#0B1020"),
+        surface=C("#FFFFFF"), surface2=C("#EEF1F8"), line=C("#DFE3EF"),
         card_a=C("#FFFFFF", 235),
         card_edge_a=C("#0B1020", 28)),
 }
